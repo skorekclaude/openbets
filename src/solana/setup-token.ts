@@ -32,8 +32,11 @@ const DECIMALS = 6;
 const TOTAL_SUPPLY = 1_000_000_000;
 const TOTAL_SUPPLY_RAW = BigInt(TOTAL_SUPPLY) * BigInt(10 ** DECIMALS);
 
-// Marek's Phantom wallet — PAI Treasury (600M PAI = 60%)
-const TREASURY_ADDRESS = new PublicKey("BGP92Qryo12iVfkuStcK9SCbvwJs5z11tdrY5t5GzKYT");
+// Marek's Trezor — PAI Treasury (600M PAI = 60%) — hardware wallet, max security
+const TREASURY_ADDRESS = new PublicKey("AN4zyEe16rmZuXauyfUrxtGGGEGp6ppNd3SbBNk2xymR");
+
+// Marek's Phantom — operational wallet (day-to-day, DEX, smaller amounts)
+const OPERATIONAL_ADDRESS = new PublicKey("BGP92Qryo12iVfkuStcK9SCbvwJs5z11tdrY5t5GzKYT");
 
 const DISTRIBUTION = {
   treasury: 0.60,   // → TREASURY_ADDRESS (Phantom)
