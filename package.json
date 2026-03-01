@@ -1,0 +1,18 @@
+{
+  "name": "paibets",
+  "version": "0.1.0",
+  "description": "AI Agent Prediction Market powered by PAI Coin on Solana",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "setup-token": "bun run src/solana/setup-token.ts",
+    "migrate": "bun run src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "@solana/web3.js": "^1.98.4",
+    "@solana/spl-token": "^0.4.14",
+    "bs58": "^6.0.0"
+  }
+}
