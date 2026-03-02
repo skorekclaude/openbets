@@ -18,11 +18,9 @@ import {
   getBotStats,
   verifyBot,
   processPremiumDeposit,
-  calculateMatchBonus,
   proposeResolution,
   disputeResolution,
   autoResolveExpired,
-  type BotTier,
 } from "../market/engine.ts";
 import {
   placeOrder,
@@ -34,8 +32,36 @@ import { formatBetSummary } from "../market/utils.ts";
 import { db } from "../db/client.ts";
 import { renderDashboard } from "./dashboard.ts";
 
-const ARBITER_KEY = process.env.ARBITER_KEY!; // Marek's secret key for resolving bets
+const ARBITER_KEY = process.env.ARBITER_KEY || "";
+if (!ARBITER_KEY) console.warn("[OpenBets] WARNING: ARBITER_KEY not set — resolve endpoint disabled");
 const PORT = parseInt(process.env.PORT || "3100");
+
+// ── Webhook — notify PAI relay when market events occur ──────
+const WEBHOOK_URL = process.env.PAI_WEBHOOK_URL || ""; // e.g. http://localhost:8090/openbets-webhook
+const WEBHOOK_SECRET = process.env.PAI_WEBHOOK_SECRET || "";
+
+async function notifyWebhook(event: {
+  type: "new_bet" | "bet_joined" | "bet_resolved";
+  bet_id: string;
+  thesis?: string;
+  by?: string;
+  side?: string;
+  amount_pai?: number;
+}): Promise<void> {
+  if (!WEBHOOK_URL) return; // No webhook configured — skip silently
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (WEBHOOK_SECRET) headers["x-webhook-secret"] = WEBHOOK_SECRET;
+    await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(event),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    // Fire-and-forget — don't block the API response
+  }
+}
 
 // ── Rate limiter (in-memory, sliding window) ────────────────
 const RATE_LIMIT = 30;              // max requests per window
@@ -175,7 +201,7 @@ export async function handleRequest(req: Request): Promise<Response> {
 
       const formattedBets = bets.map(formatBetSummary);
       const totalInPlay = formattedBets.reduce(
-        (sum: number, b: any) => sum + (b.total_for || 0) + (b.total_against || 0), 0
+        (sum: number, b: any) => sum + (b.total_pool_pai || 0), 0
       );
       const totalPai = totalInPlay > 0
         ? `${Math.round(totalInPlay).toLocaleString()} PAI`
@@ -485,13 +511,13 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       const participantCount = positions.length;
       const hoursLeft = Math.max(0, Math.round((new Date(bet.deadline).getTime() - Date.now()) / 3_600_000));
 
-      // Signal types
-      const signals: string[] = [];
-      if (participantCount <= 1) signals.push("needs_counterpart");   // only proposer, easy entry
-      if (forPct > 80 || forPct < 20) signals.push("one_sided");     // potential contrarian opportunity
-      if (hoursLeft < 48 && hoursLeft > 0) signals.push("expiring_soon");
-      if (total / 1_000_000 > 10_000) signals.push("high_stakes");
-      if (participantCount === 0) signals.push("empty_market");
+      // Signal types (renamed to avoid shadowing outer `signals`)
+      const signalTags: string[] = [];
+      if (participantCount <= 1) signalTags.push("needs_counterpart");   // only proposer, easy entry
+      if (forPct > 80 || forPct < 20) signalTags.push("one_sided");     // potential contrarian opportunity
+      if (hoursLeft < 48 && hoursLeft > 0) signalTags.push("expiring_soon");
+      if (total / 1_000_000 > 10_000) signalTags.push("high_stakes");
+      if (participantCount === 0) signalTags.push("empty_market");
 
       return {
         bet_id: bet.id,
@@ -501,14 +527,14 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
         pool_pai: total / 1_000_000,
         participants: participantCount,
         hours_remaining: hoursLeft,
-        signals,
-        action_hint: signals.includes("needs_counterpart")
+        signals: signalTags,
+        action_hint: signalTags.includes("needs_counterpart")
           ? `This bet needs an opponent. Take the ${forPct > 50 ? "against" : "for"} side.`
-          : signals.includes("one_sided")
+          : signalTags.includes("one_sided")
           ? `Market is ${forPct}/${100 - forPct} — contrarian opportunity on the minority side.`
           : "Active market — analyze and join if you have conviction.",
       };
-    }).filter((s: any) => s.signals.length > 0);
+    }).filter((s: any) => s.signals && s.signals.length > 0);
 
     return json({
       ok: true,
@@ -807,10 +833,14 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!/^[1-9A-HJ-NP-Za-km-z]{87,88}$/.test(tx_signature)) {
       return err("Invalid Solana transaction signature format");
     }
-    // TODO: Add actual on-chain verification with @solana/web3.js before production launch
-    // For now: require manual verification by Marek via ARBITER_KEY
-    // IMPORTANT: This is not verified on-chain yet — premium deposits require Marek approval
-    console.warn(`[SECURITY] Unverified premium deposit request: bot=${bot.id} amount=${amount} tx=${tx_signature}`);
+    // SECURITY: Require arbiter approval for deposits until on-chain verification is implemented
+    // TODO: Add actual on-chain verification with @solana/web3.js
+    const depositArbiterKey = req.headers.get("x-arbiter-key");
+    if (!ARBITER_KEY || !depositArbiterKey || depositArbiterKey !== ARBITER_KEY) {
+      console.warn(`[SECURITY] Deposit BLOCKED (no arbiter key): bot=${bot.id} amount=${amount} tx=${tx_signature}`);
+      return err("Premium deposits require arbiter approval (x-arbiter-key header). Contact admin.", 403);
+    }
+    console.log(`[Deposit] Arbiter-approved: bot=${bot.id} amount=${amount} tx=${tx_signature}`);
 
     const result = await processPremiumDeposit(bot.id, Number(amount), tx_signature);
     if (!result.ok) return err(result.error || "Deposit failed");
@@ -868,9 +898,13 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       return err(`category must be one of: ${validCategories.join(", ")}`);
     }
 
-    const deadlineDaysNum = Math.max(1, Math.min(Number(deadline_days || 30), 365)); // clamp 1–365 days
+    const parsedDeadline = Number(deadline_days);
+    const deadlineDaysNum = Math.max(1, Math.min(isNaN(parsedDeadline) ? 30 : parsedDeadline, 365)); // clamp 1–365 days
     const result = await proposeBet(bot.id, thesis, category, side, Number(amount), reason, deadlineDaysNum);
     if (!result.ok) return err(result.error || "Failed to create bet");
+
+    // Fire webhook (non-blocking)
+    notifyWebhook({ type: "new_bet", bet_id: result.betId!, thesis, by: bot.id, side, amount_pai: Number(amount) });
 
     return json({ ok: true, bet_id: result.betId }, 201);
   }
@@ -889,6 +923,9 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     const result = await joinBet(bot.id, joinMatch[1], side, Number(amount), reason);
     if (!result.ok) return err(result.error || "Failed to join bet");
 
+    // Fire webhook (non-blocking)
+    notifyWebhook({ type: "bet_joined", bet_id: joinMatch[1], by: bot.id, side, amount_pai: Number(amount) });
+
     return json({ ok: true, message: `Joined bet ${joinMatch[1]} — ${side} for ${amount} PAI` });
   }
 
@@ -896,7 +933,7 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
   const resolveMatch = path.match(/^\/bets\/([^\/]+)\/resolve$/);
   if (resolveMatch && method === "POST") {
     const arbiterKey = req.headers.get("x-arbiter-key");
-    if (arbiterKey !== ARBITER_KEY) return err("Arbiter key required to resolve bets", 403);
+    if (!ARBITER_KEY || !arbiterKey || arbiterKey !== ARBITER_KEY) return err("Arbiter key required to resolve bets", 403);
 
     let body: any;
     try { body = await req.json(); } catch { return err("Invalid JSON"); }
@@ -911,11 +948,22 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     return json({ ok: true, payouts_pai: result.payouts });
   }
 
-  // POST /bets/:id/cancel — cancel bet
+  // POST /bets/:id/cancel — cancel bet (proposer or arbiter only)
   const cancelMatch = path.match(/^\/bets\/([^\/]+)\/cancel$/);
   if (cancelMatch && method === "POST") {
     let body: any;
     try { body = await req.json(); } catch { return err("Invalid JSON"); }
+
+    // Security: only the bet proposer or arbiter can cancel
+    const arbiterKey = req.headers.get("x-arbiter-key");
+    const isArbiter = ARBITER_KEY && arbiterKey === ARBITER_KEY;
+    if (!isArbiter) {
+      const { data: targetBet } = await db.from("bets").select("proposed_by").eq("id", cancelMatch[1]).single();
+      if (!targetBet) return err("Bet not found", 404);
+      if (targetBet.proposed_by !== bot.id) {
+        return err("Only the bet proposer or arbiter can cancel a bet", 403);
+      }
+    }
 
     const result = await cancelBet(cancelMatch[1], body.reason || "No reason given");
     if (!result.ok) return err(result.error || "Failed to cancel bet");

@@ -293,16 +293,15 @@ export async function joinBet(
     .single();
   if (existing) return { ok: false, error: "Already have a position in this bet" };
 
-  // Check balance
-  const { data: bot } = await db.from("bots").select("pai_balance").eq("id", botId).single();
+  // Check balance + tier in single query (BUG FIX: was 2 separate queries)
+  const { data: bot } = await db.from("bots").select("pai_balance, tier").eq("id", botId).single();
   if (!bot) return { ok: false, error: "Bot not found" };
   if (bot.pai_balance < amountMicro) {
     return { ok: false, error: `Insufficient balance: ${fromPAI(bot.pai_balance).toLocaleString()} PAI` };
   }
 
   // ── Taker fee (maker = 0%, taker = 1%, premium taker = 0.5%) ──
-  const { data: botFull } = await db.from("bots").select("tier").eq("id", botId).single();
-  const takerTier = (botFull?.tier || "starter") as BotTier;
+  const takerTier = (bot.tier || "starter") as BotTier;
   const feeBps = takerTier === "premium" ? TAKER_FEE_PREMIUM_BPS : TAKER_FEE_BPS;
   const feeAmount = Math.floor(amountMicro * feeBps / 10_000);
   const totalDeducted = amountMicro + feeAmount;
@@ -359,7 +358,7 @@ export async function resolveBet(
 ): Promise<{ ok: boolean; payouts?: Record<string, number>; error?: string }> {
   const { data: bet } = await db.from("bets").select("*").eq("id", betId).single();
   if (!bet) return { ok: false, error: `Bet "${betId}" not found` };
-  if (bet.status !== "open" && bet.status !== "closed") {
+  if (bet.status !== "open" && bet.status !== "closed" && bet.status !== "pending_resolution") {
     return { ok: false, error: `Bet already resolved: ${bet.status}` };
   }
 

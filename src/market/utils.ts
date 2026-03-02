@@ -10,7 +10,9 @@ export function generateApiKey(botId: string): string {
 export async function generateBetId(db: SupabaseClient): Promise<string> {
   const { count } = await db.from("bets").select("*", { count: "exact", head: true });
   const n = ((count || 0) + 1).toString().padStart(6, "0");
-  return `bet-${n}`;
+  // Add random suffix to prevent collisions on concurrent inserts
+  const suffix = randomBytes(2).toString("hex");
+  return `bet-${n}-${suffix}`;
 }
 
 export function formatPAI(micro: number): string {

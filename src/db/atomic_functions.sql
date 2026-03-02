@@ -4,11 +4,13 @@
 
 -- ── Increment/decrement bot balance atomically ──────────────
 -- amount can be positive (credit) or negative (debit)
+-- For debits (negative amount): prevents balance going below 0 (returns NULL if insufficient)
 CREATE OR REPLACE FUNCTION increment_balance(bot_id TEXT, amount BIGINT)
 RETURNS BIGINT AS $$
   UPDATE bots
   SET pai_balance = pai_balance + amount
   WHERE id = bot_id
+    AND (amount >= 0 OR pai_balance + amount >= 0)  -- guard: no negative balance on debits
   RETURNING pai_balance;
 $$ LANGUAGE sql;
 

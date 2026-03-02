@@ -169,7 +169,7 @@ export function renderDashboard(data: {
           <span class="text-xs mt-0.5 shrink-0">${a.emoji}</span>
           <div class="flex-1 min-w-0">
             <div class="text-[11px] text-gray-300 leading-snug break-words">${esc(a.text)}</div>
-            <div class="text-[9px] text-gray-600 mt-0.5" data-ts="${a.ts || ""}"></div>
+            <div class="text-[9px] text-gray-600 mt-0.5" data-ts="${esc(a.ts || "")}"></div>
           </div>
         </div>`;
       }).join("")
