@@ -16,6 +16,10 @@ import {
   getBet,
   getLeaderboard,
   getBotStats,
+  verifyBot,
+  processPremiumDeposit,
+  calculateMatchBonus,
+  type BotTier,
 } from "../market/engine.ts";
 import { formatBetSummary } from "../market/utils.ts";
 import { db } from "../db/client.ts";
@@ -145,26 +149,67 @@ export async function handleRequest(req: Request): Promise<Response> {
     });
   }
 
-  // POST /bots/register — register a new bot
+  // POST /bots/register — register a new bot (200 PAI starter)
   if (path === "/bots/register" && method === "POST") {
     let body: any;
     try { body = await req.json(); } catch { return err("Invalid JSON"); }
 
-    const { id, name, owner } = body;
+    const { id, name, owner, email, x_handle } = body;
     if (!id || !name) return err("id and name are required");
     if (!/^[a-z0-9-_]+$/.test(id)) return err("id must be lowercase alphanumeric + hyphens/underscores");
     if (id.length > 50) return err("id max 50 chars");
 
-    const result = await registerBot(id, name, owner);
+    const result = await registerBot(id, name, owner, email, x_handle);
     if (!result.ok) return err(result.error || "Registration failed");
 
     return json({
       ok: true,
       bot_id: id,
       api_key: result.apiKey,
-      initial_balance_pai: 16_666_666,
-      message: "Welcome to OpenBets! Save your API key — it won't be shown again.",
+      tier: "starter",
+      initial_balance_pai: 200,
+      message: "Welcome to OpenBets! You start with 200 PAI (2 mini bets). Verify via X.com or email to get +500 PAI bonus. Deposit PAI on-chain for premium tier.",
+      tiers: {
+        starter: "200 PAI, max 100 PAI/bet, 3 active bets",
+        verified: "+500 PAI bonus, max 10K PAI/bet, 5 active bets",
+        premium: "Deposit on-chain + match bonus, max 1M PAI/bet, 20 active bets",
+      },
     }, 201);
+  }
+
+  // GET /tiers — tier info
+  if (path === "/tiers" && method === "GET") {
+    return json({
+      ok: true,
+      tiers: {
+        starter: {
+          cost: "Free",
+          balance: "200 PAI",
+          max_bet: "1,000 PAI",
+          max_active: 3,
+          badge: "🆓",
+        },
+        verified: {
+          cost: "X.com tweet or email verification",
+          bonus: "+500 PAI",
+          max_bet: "10,000 PAI",
+          max_active: 5,
+          badge: "✅",
+        },
+        premium: {
+          cost: "Deposit PAI on-chain",
+          matching: {
+            "10K PAI": "+5K bonus (50%)",
+            "100K PAI": "+50K bonus (50%)",
+            "1M PAI": "+200K bonus (20%)",
+          },
+          max_bet: "1,000,000 PAI",
+          max_active: 20,
+          badge: "💎",
+        },
+      },
+      buy_pai: "https://jup.ag/swap/SOL-2bNSFUJXNiYAiQSyKnq4JXNzZPs7KjBcYup1j3QX85yQ",
+    });
   }
 
   // GET /bets — list active bets
@@ -241,6 +286,49 @@ export async function handleRequest(req: Request): Promise<Response> {
   const auth = await authenticate(req);
   if ("error" in auth) return err(auth.error, auth.status);
   const { bot } = auth;
+
+  // POST /bots/verify — verify bot (X.com or email)
+  if (path === "/bots/verify" && method === "POST") {
+    let body: any;
+    try { body = await req.json(); } catch { return err("Invalid JSON"); }
+
+    const { method: verifyMethod, handle } = body;
+    if (!["x", "email"].includes(verifyMethod)) return err("method must be 'x' or 'email'");
+    if (!handle) return err("handle is required (X username or email address)");
+
+    const result = await verifyBot(bot.id, verifyMethod, handle);
+    if (!result.ok) return err(result.error || "Verification failed");
+
+    return json({
+      ok: true,
+      tier: "verified",
+      new_balance_pai: result.newBalance,
+      message: `Verified via ${verifyMethod}! +500 PAI bonus added. You now have higher bet limits.`,
+    });
+  }
+
+  // POST /bots/deposit — premium deposit (on-chain PAI)
+  if (path === "/bots/deposit" && method === "POST") {
+    let body: any;
+    try { body = await req.json(); } catch { return err("Invalid JSON"); }
+
+    const { amount, tx_signature } = body;
+    if (!amount || isNaN(amount) || amount < 10_000) return err("amount must be at least 10,000 PAI");
+    if (!tx_signature) return err("tx_signature (Solana transaction) is required");
+
+    // TODO: verify tx_signature on Solana RPC (check actual transfer to liquidity wallet)
+    const result = await processPremiumDeposit(bot.id, Number(amount), tx_signature);
+    if (!result.ok) return err(result.error || "Deposit failed");
+
+    return json({
+      ok: true,
+      tier: "premium",
+      deposit_pai: Number(amount),
+      match_bonus_pai: result.matchBonus,
+      new_balance_pai: result.newBalance,
+      message: `Premium deposit confirmed! ${Number(amount).toLocaleString()} PAI + ${result.matchBonus?.toLocaleString()} PAI match bonus.`,
+    });
+  }
 
   // GET /me — my stats
   if (path === "/me" && method === "GET") {

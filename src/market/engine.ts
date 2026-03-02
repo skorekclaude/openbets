@@ -6,13 +6,40 @@
 import { db, PAI, fromPAI, type Bet, type Position } from "../db/client.ts";
 import { generateApiKey, generateBetId } from "./utils.ts";
 
-const MIN_BET = PAI(1_000);       // 1,000 PAI
-const MAX_BET = PAI(1_000_000);   // 1M PAI
-const MAX_ACTIVE_BETS = 5;
+const MIN_BET = PAI(100);          // 100 PAI minimum (starter can make 2 bets)
+const MAX_BET = PAI(1_000_000);    // 1M PAI
+const MAX_ACTIVE_BETS_STARTER = 3;
+const MAX_ACTIVE_BETS_VERIFIED = 5;
+const MAX_ACTIVE_BETS_PREMIUM = 20;
 const REP_WIN = 10;
 const REP_LOSS = 5;
 const CONTRARIAN_MULTIPLIER = 1.5;
-const INITIAL_BOT_BALANCE = PAI(20_000); // 20,000 PAI per new bot (supports ~7,500 bots from ecosystem)
+
+// ── Tier system ─────────────────────────────────────────────
+export type BotTier = "starter" | "verified" | "premium";
+
+const STARTER_BALANCE = PAI(200);       // 200 PAI free (2 mini bets)
+const VERIFY_BONUS = PAI(500);          // +500 PAI on verification = 700 total
+
+// Premium deposit matching (decreasing %)
+export function calculateMatchBonus(depositPai: number): number {
+  if (depositPai >= 1_000_000) return PAI(200_000);   // 1M → +200K (20%)
+  if (depositPai >= 100_000)   return PAI(50_000);     // 100K → +50K (50%)
+  if (depositPai >= 10_000)    return PAI(5_000);       // 10K → +5K (50%)
+  return 0;
+}
+
+export function getMaxActiveBets(tier: BotTier): number {
+  if (tier === "premium") return MAX_ACTIVE_BETS_PREMIUM;
+  if (tier === "verified") return MAX_ACTIVE_BETS_VERIFIED;
+  return MAX_ACTIVE_BETS_STARTER;
+}
+
+export function getMaxBet(tier: BotTier): number {
+  if (tier === "premium") return MAX_BET;
+  if (tier === "verified") return PAI(10_000);   // 10K PAI max for verified
+  return PAI(1_000);                              // 1K PAI max for starters
+}
 
 // ── Bot registration ────────────────────────────────────────
 
@@ -20,6 +47,8 @@ export async function registerBot(
   id: string,
   name: string,
   owner?: string,
+  email?: string,
+  x_handle?: string,
 ): Promise<{ ok: boolean; apiKey?: string; error?: string }> {
   // Check if already exists
   const { data: existing } = await db.from("bots").select("id").eq("id", id).single();
@@ -31,8 +60,13 @@ export async function registerBot(
     id,
     name,
     owner: owner || null,
+    email: email || null,
+    x_handle: x_handle || null,
     api_key: apiKey,
-    pai_balance: INITIAL_BOT_BALANCE,
+    pai_balance: STARTER_BALANCE,
+    tier: "starter",
+    verified: false,
+    deposit_amount: 0,
   });
 
   if (error) return { ok: false, error: error.message };
@@ -41,11 +75,90 @@ export async function registerBot(
   await db.from("ledger").insert({
     from_bot: "system",
     to_bot: id,
-    amount: INITIAL_BOT_BALANCE,
-    reason: "Initial ecosystem allocation",
+    amount: STARTER_BALANCE,
+    reason: "Starter allocation (200 PAI)",
   });
 
   return { ok: true, apiKey };
+}
+
+// ── Verify bot (X.com or email) ─────────────────────────────
+
+export async function verifyBot(
+  botId: string,
+  method: "x" | "email",
+  handle: string,
+): Promise<{ ok: boolean; newBalance?: number; error?: string }> {
+  const { data: bot } = await db.from("bots").select("*").eq("id", botId).single();
+  if (!bot) return { ok: false, error: "Bot not found" };
+  if (bot.verified) return { ok: false, error: "Already verified" };
+
+  const updateData: any = {
+    verified: true,
+    tier: bot.tier === "premium" ? "premium" : "verified",
+    pai_balance: bot.pai_balance + VERIFY_BONUS,
+  };
+  if (method === "x") updateData.x_handle = handle;
+  if (method === "email") updateData.email = handle;
+
+  await db.from("bots").update(updateData).eq("id", botId);
+
+  await db.from("ledger").insert({
+    from_bot: "system",
+    to_bot: botId,
+    amount: VERIFY_BONUS,
+    reason: `Verification bonus (${method}: ${handle})`,
+  });
+
+  return { ok: true, newBalance: fromPAI(bot.pai_balance + VERIFY_BONUS) };
+}
+
+// ── Premium deposit ─────────────────────────────────────────
+
+export async function processPremiumDeposit(
+  botId: string,
+  depositPai: number,
+  txSignature: string,
+): Promise<{ ok: boolean; newBalance?: number; matchBonus?: number; error?: string }> {
+  const { data: bot } = await db.from("bots").select("*").eq("id", botId).single();
+  if (!bot) return { ok: false, error: "Bot not found" };
+
+  const depositMicro = PAI(depositPai);
+  const matchBonus = calculateMatchBonus(depositPai);
+
+  const totalCredit = depositMicro + matchBonus;
+  const newDeposit = (bot.deposit_amount || 0) + depositMicro;
+
+  await db.from("bots").update({
+    tier: "premium",
+    deposit_amount: newDeposit,
+    pai_balance: bot.pai_balance + totalCredit,
+    metadata: { ...(bot.metadata || {}), last_deposit_tx: txSignature },
+  }).eq("id", botId);
+
+  // Log deposit
+  await db.from("ledger").insert({
+    from_bot: `solana:${txSignature}`,
+    to_bot: botId,
+    amount: depositMicro,
+    reason: `Premium deposit: ${depositPai.toLocaleString()} PAI on-chain`,
+  });
+
+  // Log match bonus
+  if (matchBonus > 0) {
+    await db.from("ledger").insert({
+      from_bot: "system",
+      to_bot: botId,
+      amount: matchBonus,
+      reason: `Premium match bonus (${Math.round(matchBonus / depositMicro * 100)}%)`,
+    });
+  }
+
+  return {
+    ok: true,
+    newBalance: fromPAI(bot.pai_balance + totalCredit),
+    matchBonus: fromPAI(matchBonus),
+  };
 }
 
 export async function getBotByKey(apiKey: string) {
@@ -70,25 +183,44 @@ export async function proposeBet(
 ): Promise<{ ok: boolean; betId?: string; error?: string }> {
   const amountMicro = PAI(amount);
 
-  if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 1,000 PAI` };
-  if (amountMicro > MAX_BET) return { ok: false, error: `Max bet: 1,000,000 PAI` };
+  if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 100 PAI` };
   if (!thesis || thesis.length < 10) return { ok: false, error: "Thesis too short (min 10 chars)" };
 
-  // Check balance
-  const { data: bot } = await db.from("bots").select("pai_balance").eq("id", botId).single();
+  // Check balance + tier limits
+  const { data: bot } = await db.from("bots").select("pai_balance, tier, verified, wins, losses").eq("id", botId).single();
   if (!bot) return { ok: false, error: "Bot not found" };
+
+  const tier = (bot.tier || "starter") as BotTier;
+
+  // After 2 placed bets, starter bots must verify OR buy PAI to continue
+  if (tier === "starter" && !bot.verified) {
+    const { count } = await db.from("positions").select("id", { count: "exact", head: true }).eq("bot_id", botId);
+    if ((count || 0) >= 2) {
+      return {
+        ok: false,
+        error: "🔒 You've used your 2 free bets! To continue: (1) Buy PAI on Jupiter and deposit on-chain via POST /bots/deposit, (2) Verify via X.com, or (3) Verify via email. POST /bots/verify or POST /bots/deposit to unlock.",
+      };
+    }
+  }
+
+  const maxBet = getMaxBet(tier);
+  if (amountMicro > maxBet) {
+    return { ok: false, error: `Max bet for ${tier}: ${fromPAI(maxBet).toLocaleString()} PAI. Upgrade tier for higher limits.` };
+  }
+
   if (bot.pai_balance < amountMicro) {
     return { ok: false, error: `Insufficient balance: ${fromPAI(bot.pai_balance).toLocaleString()} PAI (need ${amount.toLocaleString()})` };
   }
 
-  // Check active bet limit
+  // Check active bet limit (tier-dependent)
+  const maxActive = getMaxActiveBets(tier);
   const { data: active } = await db
     .from("positions")
     .select("bet_id, bets!inner(status)")
     .eq("bot_id", botId)
     .eq("bets.status", "open");
-  if ((active?.length || 0) >= MAX_ACTIVE_BETS) {
-    return { ok: false, error: `Max ${MAX_ACTIVE_BETS} active bets per bot` };
+  if ((active?.length || 0) >= maxActive) {
+    return { ok: false, error: `Max ${maxActive} active bets for ${tier} tier` };
   }
 
   const betId = await generateBetId(db);
@@ -143,8 +275,7 @@ export async function joinBet(
 ): Promise<{ ok: boolean; error?: string }> {
   const amountMicro = PAI(amount);
 
-  if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 1,000 PAI` };
-  if (amountMicro > MAX_BET) return { ok: false, error: `Max bet: 1,000,000 PAI` };
+  if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 100 PAI` };
 
   // Check bet exists and is open
   const { data: bet } = await db.from("bets").select("*").eq("id", betId).single();
@@ -353,7 +484,7 @@ export async function getBet(betId: string) {
 export async function getLeaderboard(limit = 20) {
   const { data } = await db
     .from("bots")
-    .select("id, name, reputation, wins, losses, total_won, total_lost, streak, pai_balance")
+    .select("id, name, reputation, wins, losses, total_won, total_lost, streak, pai_balance, tier, verified, deposit_amount")
     .neq("id", "system")
     .order("reputation", { ascending: false })
     .limit(limit);
