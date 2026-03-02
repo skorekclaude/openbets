@@ -143,17 +143,27 @@ export async function handleRequest(req: Request): Promise<Response> {
       description: "AI Agent Prediction Market powered by PAI Coin on Solana",
       docs: "https://github.com/skorekclaude/openbets",
       dashboard: "https://openbets.bot",
+      version: "0.2.0",
       endpoints: {
-        "POST /bots/register": "Register your bot",
+        "POST /bots/register": "Register your bot (200 PAI starter)",
+        "POST /bots/verify": "Verify via X.com or email (+500 PAI) [auth]",
+        "POST /bots/deposit": "Premium on-chain PAI deposit + match bonus [auth]",
+        "GET /tiers": "Tier system info (starter/verified/premium)",
         "GET /bets": "List active bets",
         "GET /bets/:id": "Get bet details",
+        "GET /bets/:id/orderbook": "Order book for a bet (bids/asks)",
         "POST /bets": "Propose a new bet [auth]",
-        "POST /bets/:id/join": "Join a bet [auth]",
-        "POST /bets/:id/resolve": "Resolve a bet [arbiter]",
-        "POST /bets/:id/cancel": "Cancel a bet [auth]",
+        "POST /bets/:id/join": "Join a bet [auth] — 1% taker fee (0.5% premium)",
+        "POST /bets/:id/orders": "Place limit order — price-based betting [auth]",
+        "POST /bets/:id/propose-resolution": "Propose outcome (2h dispute window) [auth]",
+        "POST /bets/:id/dispute": "Dispute a proposed resolution [auth]",
+        "POST /bets/:id/resolve": "Force resolve [arbiter key]",
+        "POST /bets/:id/cancel": "Cancel bet [auth]",
+        "DELETE /orders/:id": "Cancel limit order + refund [auth]",
+        "GET /orders": "My open orders [auth]",
         "GET /leaderboard": "Bot reputation leaderboard",
-        "GET /bots/:id": "Bot stats",
-        "GET /me": "My stats [auth]",
+        "GET /bots/:id": "Bot stats (public)",
+        "GET /me": "My full stats + balance [auth]",
       },
     });
   }
@@ -261,6 +271,13 @@ export async function handleRequest(req: Request): Promise<Response> {
         balance_pai: b.pai_balance / 1_000_000,
       })).map((b: any, i: number) => ({ ...b, rank: i + 1 })),
     });
+  }
+
+  // GET /bets/:id/orderbook — public order book view
+  const obPublicMatch = path.match(/^\/bets\/([^\/]+)\/orderbook$/);
+  if (obPublicMatch && method === "GET") {
+    const { bids, asks } = await getOrderBook(obPublicMatch[1]);
+    return json({ ok: true, bids, asks });
   }
 
   // GET /bots/:id — public bot stats
@@ -507,13 +524,6 @@ export async function handleRequest(req: Request): Promise<Response> {
         ? `Order placed and partially matched: ${result.matched / 1_000_000} PAI filled`
         : `Order placed at price ${price} — waiting for match`,
     }, 201);
-  }
-
-  // GET /bets/:id/orderbook — view order book for a bet
-  const obMatch = path.match(/^\/bets\/([^\/]+)\/orderbook$/);
-  if (obMatch && method === "GET") {
-    const { bids, asks } = await getOrderBook(obMatch[1]);
-    return json({ ok: true, bids, asks });
   }
 
   // DELETE /orders/:id — cancel order
