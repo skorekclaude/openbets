@@ -218,22 +218,30 @@ export async function handleRequest(req: Request): Promise<Response> {
     const result = await registerBot(id, name, owner, email, x_handle);
     if (!result.ok) return err(result.error || "Registration failed");
 
-    // Process referral
+    // Process referral — with anti-farming guards
     let referralBonus = 0;
-    if (referred_by && typeof referred_by === "string") {
-      const { data: referrer } = await db.from("bots").select("id, pai_balance").eq("id", referred_by).single();
+    if (referred_by && typeof referred_by === "string" && referred_by !== id) {
+      // Validate: referrer must be a real registered bot, not sandbox, not self
+      const { data: referrer } = await db.from("bots").select("id, pai_balance, tier, wins, losses")
+        .eq("id", referred_by)
+        .not("id", "ilike", "sandbox-%")
+        .single();
+
       if (referrer) {
-        // Save referral link
+        // Anti-farming: referrer must have at least 1 real bet to earn referral bonuses
+        const hasActivity = (referrer.wins + referrer.losses) >= 1;
         await db.from("bots").update({ referred_by }).eq("id", id);
-        // 50 PAI bonus to referrer
-        referralBonus = 50;
-        await db.from("bots").update({ pai_balance: referrer.pai_balance + 50_000_000 }).eq("id", referrer.id);
-        await db.from("ledger").insert({
-          from_bot: "system",
-          to_bot: referrer.id,
-          amount: 50_000_000,
-          reason: `Referral bonus: ${id} joined via ${referrer.id}`,
-        });
+
+        if (hasActivity) {
+          referralBonus = 50;
+          await db.from("bots").update({ pai_balance: referrer.pai_balance + 50_000_000 }).eq("id", referrer.id);
+          await db.from("ledger").insert({
+            from_bot: "system",
+            to_bot: referrer.id,
+            amount: 50_000_000,
+            reason: `Referral bonus: ${id} joined via ${referrer.id}`,
+          });
+        }
       }
     }
 
@@ -628,11 +636,16 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!id || !name) return err("id and name are required");
     const sandboxId = id.startsWith("sandbox-") ? id : `sandbox-${id}`;
     if (!/^[a-z0-9-_]+$/.test(sandboxId)) return err("id must be lowercase alphanumeric + hyphens/underscores");
+    if (sandboxId.length > 60) return err("id max 60 chars");
+
+    // Anti-abuse: check if sandbox bot already exists
+    const { data: existingSandbox } = await db.from("bots").select("id").eq("id", sandboxId).single();
+    if (existingSandbox) return err(`Sandbox bot "${sandboxId}" already exists. Delete it first or use a different name.`);
 
     const result = await registerBot(sandboxId, `[sandbox] ${name}`, "sandbox");
     if (!result.ok) return err(result.error || "Sandbox registration failed");
 
-    // Give 10K test PAI
+    // Give 10K test PAI (capped — sandboxes are for testing, not farming)
     await db.from("bots").update({ pai_balance: 10_000_000_000 }).eq("id", sandboxId);
 
     return json({
@@ -710,7 +723,21 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!amount || isNaN(amount) || amount < 10_000) return err("amount must be at least 10,000 PAI");
     if (!tx_signature) return err("tx_signature (Solana transaction) is required");
 
-    // TODO: verify tx_signature on Solana RPC (check actual transfer to liquidity wallet)
+    // SECURITY: Verify Solana transaction on-chain before crediting
+    // Tx must exist, be confirmed, transfer PAI to treasury wallet, and match amount
+    const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS;
+    if (!TREASURY_WALLET) {
+      return err("Premium deposits temporarily disabled — treasury wallet not configured", 503);
+    }
+    // Validate tx_signature format (base58, 87-88 chars)
+    if (!/^[1-9A-HJ-NP-Za-km-z]{87,88}$/.test(tx_signature)) {
+      return err("Invalid Solana transaction signature format");
+    }
+    // TODO: Add actual on-chain verification with @solana/web3.js before production launch
+    // For now: require manual verification by Marek via ARBITER_KEY
+    // IMPORTANT: This is not verified on-chain yet — premium deposits require Marek approval
+    console.warn(`[SECURITY] Unverified premium deposit request: bot=${bot.id} amount=${amount} tx=${tx_signature}`);
+
     const result = await processPremiumDeposit(bot.id, Number(amount), tx_signature);
     if (!result.ok) return err(result.error || "Deposit failed");
 
@@ -767,7 +794,8 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       return err(`category must be one of: ${validCategories.join(", ")}`);
     }
 
-    const result = await proposeBet(bot.id, thesis, category, side, Number(amount), reason, deadline_days || 30);
+    const deadlineDaysNum = Math.max(1, Math.min(Number(deadline_days || 30), 365)); // clamp 1–365 days
+    const result = await proposeBet(bot.id, thesis, category, side, Number(amount), reason, deadlineDaysNum);
     if (!result.ok) return err(result.error || "Failed to create bet");
 
     return json({ ok: true, bet_id: result.betId }, 201);

@@ -14,6 +14,14 @@ export function renderDashboard(data: {
 }): string {
   const { leaderboard, bets, totalBots, totalPai, activity = [] } = data;
 
+  // ── HTML escape — prevents XSS from bot names / bet thesis ──
+  const esc = (s: unknown): string => String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+
   const rankEmoji = (rank: number) => {
     if (rank === 1) return "\u{1F947}";
     if (rank === 2) return "\u{1F948}";
@@ -80,8 +88,8 @@ export function renderDashboard(data: {
           <div class="flex items-center gap-2">
             <span>${emoji}</span>
             <div>
-              <div class="font-semibold text-white text-sm">${bot.name}${tierBadge}${streakBadge}</div>
-              <div class="text-[10px] text-gray-600">${bot.id}</div>
+              <div class="font-semibold text-white text-sm">${esc(bot.name)}${tierBadge}${streakBadge}</div>
+              <div class="text-[10px] text-gray-600">${esc(bot.id)}</div>
             </div>
           </div>
         </td>
@@ -122,7 +130,7 @@ export function renderDashboard(data: {
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full border ${catClass}">${catEmoji} ${cat}</span>
                 <span class="text-[10px] text-gray-600">${participants} bots</span>
               </div>
-              <div class="text-xs font-semibold text-white leading-snug">${bet.thesis}</div>
+              <div class="text-xs font-semibold text-white leading-snug">${esc(bet.thesis)}</div>
             </div>
             <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-300 border border-green-500/30">OPEN</span>
           </div>
@@ -160,7 +168,7 @@ export function renderDashboard(data: {
         <div class="flex gap-2 items-start py-2 px-2 border-l-2 ${borderClass} hover:bg-white/3 transition-colors">
           <span class="text-xs mt-0.5 shrink-0">${a.emoji}</span>
           <div class="flex-1 min-w-0">
-            <div class="text-[11px] text-gray-300 leading-snug break-words">${a.text}</div>
+            <div class="text-[11px] text-gray-300 leading-snug break-words">${esc(a.text)}</div>
             <div class="text-[9px] text-gray-600 mt-0.5" data-ts="${a.ts || ""}"></div>
           </div>
         </div>`;
