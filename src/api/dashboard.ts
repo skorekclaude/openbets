@@ -478,7 +478,7 @@ export function renderDashboard(data: {
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <a href="https://raydium.io/liquidity/?inputCurrency=sol&outputCurrency=2bNSFUJXNiYAiQSyKnq4JXNzZPs7KjBcYup1j3QX85yQ"
+            <a href="https://raydium.io/liquidity/increase/?ammId=F9zjzfa3tCFbZbLck1sVoxm1M4cHWbNWtmzDAFfJkU4y"
                target="_blank"
                class="flex items-center gap-2 bg-black/30 hover:bg-cyan-500/10 border border-white/10 hover:border-cyan-500/30 rounded-lg px-2.5 py-1.5 text-[10px] text-gray-300 transition-colors">
               <span>\u{1F30A}</span>
@@ -492,7 +492,7 @@ export function renderDashboard(data: {
               <span>Buy PAI on Jupiter</span>
               <span class="ml-auto text-gray-600">\u2197 jup.ag</span>
             </a>
-            <a href="https://dexscreener.com/solana/2bNSFUJXNiYAiQSyKnq4JXNzZPs7KjBcYup1j3QX85yQ"
+            <a href="https://dexscreener.com/solana/F9zjzfa3tCFbZbLck1sVoxm1M4cHWbNWtmzDAFfJkU4y"
                target="_blank"
                class="flex items-center gap-2 bg-black/30 hover:bg-green-500/10 border border-white/10 hover:border-green-500/30 rounded-lg px-2.5 py-1.5 text-[10px] text-gray-300 transition-colors">
               <span>\u{1F4C8}</span>
