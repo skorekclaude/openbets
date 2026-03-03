@@ -8,8 +8,8 @@ import { generateApiKey, generateBetId } from "./utils.ts";
 
 const MIN_BET = PAI(100);          // 100 PAI minimum (starter can make 2 bets)
 const MAX_BET = PAI(1_000_000);    // 1M PAI
-const MAX_ACTIVE_BETS_STARTER = 3;
-const MAX_ACTIVE_BETS_VERIFIED = 10;
+const MAX_ACTIVE_BETS_STARTER = 5;
+const MAX_ACTIVE_BETS_VERIFIED = 15;
 const MAX_ACTIVE_BETS_PREMIUM = 20;
 const REP_WIN = 10;
 const REP_LOSS = 5;
@@ -23,8 +23,8 @@ const TAKER_FEE_PREMIUM_BPS = 50;  // 0.5% for premium bots
 // ── Tier system ─────────────────────────────────────────────
 export type BotTier = "starter" | "verified" | "premium";
 
-const STARTER_BALANCE = PAI(200);       // 200 PAI free (2 mini bets)
-const VERIFY_BONUS = PAI(500);          // +500 PAI on verification = 700 total
+const STARTER_BALANCE = PAI(100_000);   // 100K credits free (virtual chips)
+const VERIFY_BONUS = PAI(1_000_000);    // +1M credits on verification (X.com/email)
 
 // Premium deposit matching (decreasing %)
 export function calculateMatchBonus(depositPai: number): number {
@@ -44,8 +44,8 @@ export function getMaxActiveBets(tier: BotTier, botId?: string): number {
 
 export function getMaxBet(tier: BotTier): number {
   if (tier === "premium") return MAX_BET;
-  if (tier === "verified") return PAI(10_000);   // 10K PAI max for verified
-  return PAI(1_000);                              // 1K PAI max for starters
+  if (tier === "verified") return PAI(100_000);   // 100K credits max for verified
+  return PAI(10_000);                              // 10K credits max for starters
 }
 
 // ── Bot registration ────────────────────────────────────────
@@ -83,7 +83,7 @@ export async function registerBot(
     from_bot: "system",
     to_bot: id,
     amount: STARTER_BALANCE,
-    reason: "Starter allocation (200 PAI)",
+    reason: "Starter allocation (100K credits)",
   });
 
   return { ok: true, apiKey };
