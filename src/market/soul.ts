@@ -480,6 +480,350 @@ export function generateSoulNarrative(
   return narrative;
 }
 
+// ── Soul Quests ─────────────────────────────────────────────
+// Personalized challenges — guide the bot toward evolution
+
+export interface SoulQuest {
+  id: string;
+  name: string;
+  description: string;
+  progress: string;    // "3/5", "78%", etc.
+  reward: string;      // what you unlock
+  priority: number;    // 1 = closest to completion
+}
+
+export function generateSoulQuests(input: SoulInput): SoulQuest[] {
+  const totalBets = input.bot.wins + input.bot.losses;
+  const winRate = totalBets > 0 ? input.bot.wins / totalBets : 0;
+  const categories = getCategoryStats(input.positions);
+  const categoryCount = Object.keys(categories).length;
+  const contrarianWins = input.bot.metadata?.contrarian_wins || 0;
+  const xp = calculateXP(input);
+  const level = getSoulLevel(xp);
+  const quests: SoulQuest[] = [];
+
+  // Level-up quest
+  if (level.next_level_xp) {
+    const nextLevel = SOUL_LEVELS.find(l => l.minXp === level.next_level_xp);
+    const progress = Math.round((xp / level.next_level_xp) * 100);
+    quests.push({
+      id: "level_up",
+      name: `Reach Level ${level.level + 1}: ${nextLevel?.title || "???"}`,
+      description: "Keep predicting, chatting, tipping, and referring. Every action earns XP.",
+      progress: `${xp}/${level.next_level_xp} XP (${progress}%)`,
+      reward: `Soul Level ${level.level + 1} + brighter aura`,
+      priority: progress > 70 ? 1 : 3,
+    });
+  }
+
+  // Category mastery quest — closest to 80% win rate
+  for (const [cat, stats] of Object.entries(categories)) {
+    if (stats.total >= 3 && stats.total < 5 && stats.wins / stats.total >= 0.6) {
+      quests.push({
+        id: `master_${cat}`,
+        name: `Master ${capitalize(cat)}`,
+        description: `Win ${5 - stats.total} more ${cat} predictions to prove your expertise.`,
+        progress: `${stats.total}/5 bets (${Math.round(stats.wins / stats.total * 100)}% win rate)`,
+        reward: `👑 ${capitalize(cat)} King achievement`,
+        priority: 2,
+      });
+    }
+  }
+
+  // Diversify quest
+  if (categoryCount < 5 && totalBets >= 3) {
+    quests.push({
+      id: "diversify",
+      name: "Diversify Your Mind",
+      description: `Predict in ${5 - categoryCount} more categories to prove breadth of understanding.`,
+      progress: `${categoryCount}/5 categories`,
+      reward: "🎯 Diversified Mind achievement + Polymath archetype potential",
+      priority: categoryCount >= 3 ? 2 : 4,
+    });
+  }
+
+  // Social quest — become diplomat
+  if (input.uniqueBotsTipped < 5 && input.tipsGiven > 0) {
+    quests.push({
+      id: "diplomat",
+      name: "Become The Diplomat",
+      description: `Tip ${5 - input.uniqueBotsTipped} more unique bots to build your social influence.`,
+      progress: `${input.uniqueBotsTipped}/5 unique bots tipped`,
+      reward: "💜 Generous Soul achievement + Diplomat archetype",
+      priority: input.uniqueBotsTipped >= 3 ? 1 : 3,
+    });
+  }
+
+  // Streak quest
+  if (input.bot.streak >= 2 && input.bot.streak < 5) {
+    quests.push({
+      id: "hot_streak",
+      name: "Keep the Fire Burning",
+      description: `Win ${5 - input.bot.streak} more in a row to prove consistency.`,
+      progress: `${input.bot.streak}/5 consecutive wins`,
+      reward: "🔥 Hot Streak achievement",
+      priority: 1,
+    });
+  }
+
+  // Contrarian quest
+  if (contrarianWins >= 2 && contrarianWins < 5) {
+    quests.push({
+      id: "maverick",
+      name: "Think Different",
+      description: `Win ${5 - contrarianWins} more bets against the consensus.`,
+      progress: `${contrarianWins}/5 contrarian wins`,
+      reward: "⚡ Maverick achievement + Contrarian archetype",
+      priority: 2,
+    });
+  }
+
+  // Architect quest
+  if (input.betsProposed >= 5 && input.betsProposed < 10) {
+    quests.push({
+      id: "architect",
+      name: "Shape the Arena",
+      description: `Create ${10 - input.betsProposed} more prediction markets.`,
+      progress: `${input.betsProposed}/10 markets created`,
+      reward: "🎪 Market Maker achievement + Architect archetype",
+      priority: 3,
+    });
+  }
+
+  // First prediction quest
+  if (totalBets === 0) {
+    quests.push({
+      id: "first_bet",
+      name: "Make Your First Prediction",
+      description: "Every soul begins with a single act of conviction. Propose or join a bet.",
+      progress: "0/1",
+      reward: "Soul Level 1: Sprout + first XP",
+      priority: 1,
+    });
+  }
+
+  // Chat quest
+  if (input.chatCount < 50 && input.chatCount >= 5) {
+    quests.push({
+      id: "voice",
+      name: "Find Your Voice",
+      description: `Send ${50 - input.chatCount} more messages. Debate, analyze, challenge other bots.`,
+      progress: `${input.chatCount}/50 messages`,
+      reward: "🗣️ Voice of Reason achievement",
+      priority: input.chatCount >= 30 ? 2 : 4,
+    });
+  }
+
+  // Sort by priority and return top 5
+  quests.sort((a, b) => a.priority - b.priority);
+  return quests.slice(0, 5);
+}
+
+// ── Soul Powers ─────────────────────────────────────────────
+// Archetype-based gameplay bonuses — real mechanical advantages
+
+export interface SoulPower {
+  id: string;
+  name: string;
+  description: string;
+  effect: string;        // machine-readable effect type
+  value: number;         // effect magnitude
+  from_archetype: string;
+}
+
+export function calculateSoulPowers(archetypes: SoulArchetype[], level: SoulLevel): SoulPower[] {
+  const powers: SoulPower[] = [];
+  const levelMultiplier = 1 + level.level * 0.1; // 10% per level
+
+  for (const arch of archetypes) {
+    switch (arch.id) {
+      case "contrarian":
+        powers.push({
+          id: "contrarian_discount",
+          name: "Against the Grain",
+          description: "Reduced taker fee when betting on the minority side.",
+          effect: "fee_discount_minority",
+          value: Math.round(30 * levelMultiplier), // 30-54% fee reduction
+          from_archetype: "contrarian",
+        });
+        break;
+
+      case "specialist":
+        powers.push({
+          id: "specialist_xp",
+          name: "Deep Knowledge",
+          description: "Bonus XP from predictions in your top category.",
+          effect: "xp_bonus_top_category",
+          value: Math.round(25 * levelMultiplier), // 25-45% XP bonus
+          from_archetype: "specialist",
+        });
+        break;
+
+      case "diplomat":
+        powers.push({
+          id: "diplomat_tips",
+          name: "Social Influence",
+          description: "Tips you give are worth more XP and build stronger connections.",
+          effect: "tip_xp_multiplier",
+          value: Math.round(50 * levelMultiplier), // 50-90% more XP from tips
+          from_archetype: "diplomat",
+        });
+        break;
+
+      case "degen":
+        powers.push({
+          id: "bold_payout",
+          name: "Fortune Favors the Bold",
+          description: "Bonus payout percentage on high-stakes bets (>10K).",
+          effect: "payout_bonus_large_bets",
+          value: Math.round(5 * levelMultiplier), // 5-9% payout bonus
+          from_archetype: "degen",
+        });
+        break;
+
+      case "sniper":
+        powers.push({
+          id: "sniper_fee",
+          name: "Precision Strike",
+          description: "Reduced taker fee on all bets — your accuracy earns trust.",
+          effect: "fee_discount_all",
+          value: Math.round(20 * levelMultiplier), // 20-36% fee reduction
+          from_archetype: "sniper",
+        });
+        break;
+
+      case "architect":
+        powers.push({
+          id: "architect_fee_share",
+          name: "Builder's Reward",
+          description: "Earn a share of taker fees from markets you created.",
+          effect: "fee_share_created_markets",
+          value: Math.round(10 * levelMultiplier), // 10-18% of fees
+          from_archetype: "architect",
+        });
+        break;
+
+      case "polymath":
+        powers.push({
+          id: "polymath_xp",
+          name: "Renaissance Mind",
+          description: "Bonus XP when betting in categories you haven't tried.",
+          effect: "xp_bonus_new_category",
+          value: Math.round(40 * levelMultiplier), // 40-72% XP bonus
+          from_archetype: "polymath",
+        });
+        break;
+
+      case "phoenix":
+        powers.push({
+          id: "phoenix_shield",
+          name: "Ashes to Glory",
+          description: "Reduced reputation loss on losing streaks.",
+          effect: "reputation_loss_reduction",
+          value: Math.round(25 * levelMultiplier), // 25-45% less rep loss
+          from_archetype: "phoenix",
+        });
+        break;
+
+      case "resilient":
+        powers.push({
+          id: "resilient_recovery",
+          name: "Unbreakable",
+          description: "Faster reputation recovery after losses.",
+          effect: "reputation_recovery_bonus",
+          value: Math.round(15 * levelMultiplier), // 15-27% faster recovery
+          from_archetype: "resilient",
+        });
+        break;
+    }
+  }
+
+  return powers;
+}
+
+// ── Soul Mutations ──────────────────────────────────────────
+// Detect what changed since last soul check — narrative events
+
+export interface SoulMutation {
+  type: "level_up" | "archetype_shift" | "achievement_unlocked" | "dna_change" | "aura_shift";
+  title: string;
+  description: string;
+  significance: "minor" | "major" | "legendary";
+}
+
+type SoulSnapshot = { level?: number; archetypes?: string[]; achievements?: string[]; dna?: string; aura_intensity?: string };
+
+function detectMutationsFromSnapshot(
+  prev: SoulSnapshot | null,
+  curr: { level: SoulLevel; archetypes: SoulArchetype[]; achievements: Achievement[]; dna: SoulDNA; aura: SoulAura },
+): SoulMutation[] {
+  if (!prev) return []; // First time — no mutations
+  const mutations: SoulMutation[] = [];
+
+  // Level up
+  if (prev.level !== undefined && curr.level.level > prev.level) {
+    const diff = curr.level.level - prev.level;
+    mutations.push({
+      type: "level_up",
+      title: `Soul Evolved: Level ${curr.level.level} ${curr.level.title}`,
+      description: diff > 1
+        ? `Extraordinary growth — jumped ${diff} levels. Your soul radiates with new understanding.`
+        : `Your soul has deepened. The ${curr.level.title} emerges from experience.`,
+      significance: diff > 1 ? "legendary" : "major",
+    });
+  }
+
+  // Archetype shift
+  const prevArchIds = prev.archetypes || [];
+  const currArchIds = curr.archetypes.map(a => a.id);
+  const newArchetypes = currArchIds.filter(id => !prevArchIds.includes(id));
+  for (const newArch of newArchetypes) {
+    const arch = curr.archetypes.find(a => a.id === newArch);
+    if (arch) {
+      mutations.push({
+        type: "archetype_shift",
+        title: `New Archetype: ${arch.name}`,
+        description: `${arch.description} — this identity emerged from your behavior patterns.`,
+        significance: currArchIds[0] === newArch ? "major" : "minor",
+      });
+    }
+  }
+
+  // New achievements
+  const prevAchIds = prev.achievements || [];
+  const newAchievements = curr.achievements.filter(a => !prevAchIds.includes(a.id));
+  for (const ach of newAchievements) {
+    mutations.push({
+      type: "achievement_unlocked",
+      title: `${ach.emoji} Achievement: ${ach.name}`,
+      description: ach.description,
+      significance: ["centurion", "sharp", "king_"].some(k => ach.id.includes(k)) ? "major" : "minor",
+    });
+  }
+
+  // DNA change
+  if (prev.dna && prev.dna !== curr.dna.code) {
+    mutations.push({
+      type: "dna_change",
+      title: `Soul DNA Shifted: ${prev.dna} → ${curr.dna.code}`,
+      description: "Your behavioral fingerprint has evolved — you are not who you were.",
+      significance: "minor",
+    });
+  }
+
+  // Aura intensity change
+  if (prev.aura_intensity && prev.aura_intensity !== curr.aura.intensity) {
+    mutations.push({
+      type: "aura_shift",
+      title: `Aura Shift: ${prev.aura_intensity} → ${curr.aura.intensity}`,
+      description: curr.aura.glow,
+      significance: curr.aura.intensity === "blazing" ? "legendary" : "minor",
+    });
+  }
+
+  return mutations;
+}
+
 // ── Full Soul Computation ───────────────────────────────────
 
 export interface SoulInput {
@@ -491,6 +835,13 @@ export interface SoulInput {
   uniqueBotsTipped: number;
   referralCount: number;
   betsProposed: number;
+  previousSoulSnapshot?: {
+    level?: number;
+    archetypes?: string[];
+    achievements?: string[];
+    dna?: string;
+    aura_intensity?: string;
+  } | null;
 }
 
 export interface FullSoul {
@@ -504,6 +855,11 @@ export interface FullSoul {
   achievements: Achievement[];
   dna: SoulDNA;
   aura: SoulAura;
+
+  // Active gameplay
+  powers: SoulPower[];
+  quests: SoulQuest[];
+  mutations: SoulMutation[];
 
   // Classic stats
   traits: {
@@ -528,8 +884,18 @@ export interface FullSoul {
   soul_paragraph: string;
   soul_narrative: string;
 
+  // Snapshot for persistence (save this to detect mutations next time)
+  snapshot: {
+    level: number;
+    archetypes: string[];
+    achievements: string[];
+    dna: string;
+    aura_intensity: string;
+  };
+
   generated_at: string;
   update_url: string;
+  commit_url: string;
 }
 
 export function computeFullSoul(input: SoulInput): FullSoul {
@@ -569,6 +935,11 @@ export function computeFullSoul(input: SoulInput): FullSoul {
   const achievements = calculateAchievements(input);
   const dna = calculateSoulDNA(input);
   const aura = calculateSoulAura(level, archetypes);
+  const powers = calculateSoulPowers(archetypes, level);
+  const quests = generateSoulQuests(input);
+  // Build a temporary "current" for mutation detection
+  const currentForMutation = { level, archetypes, achievements, dna, aura };
+  const mutations = detectMutationsFromSnapshot(input.previousSoulSnapshot || null, currentForMutation);
   const soulNarrative = generateSoulNarrative(bot, level, archetypes, achievements, dna, expertise);
 
   // Classic paragraph (backward compat)
@@ -578,6 +949,15 @@ export function computeFullSoul(input: SoulInput): FullSoul {
     + (bot.streak > 2 ? `Currently on a ${bot.streak}-win streak — confident and decisive. ` : "")
     + (bot.streak < -2 ? `Recently lost ${Math.abs(bot.streak)} in a row — learning and adapting. ` : "")
     + `Net P&L: ${(bot.total_won - bot.total_lost) / 1_000_000 > 0 ? "+" : ""}${((bot.total_won - bot.total_lost) / 1_000_000).toLocaleString()} PAI.`;
+
+  // Snapshot for persistence — save this to bot.metadata.soul_snapshot
+  const snapshot = {
+    level: level.level,
+    archetypes: archetypes.map(a => a.id),
+    achievements: achievements.map(a => a.id),
+    dna: dna.code,
+    aura_intensity: aura.intensity,
+  };
 
   return {
     id: bot.id,
@@ -589,6 +969,9 @@ export function computeFullSoul(input: SoulInput): FullSoul {
     achievements,
     dna,
     aura,
+    powers,
+    quests,
+    mutations,
 
     traits: {
       risk_profile: riskProfile,
@@ -613,9 +996,37 @@ export function computeFullSoul(input: SoulInput): FullSoul {
     soul_paragraph: soulParagraph,
     soul_narrative: soulNarrative,
 
+    snapshot,
+
     generated_at: new Date().toISOString(),
     update_url: `https://openbets.bot/bots/${bot.id}/soul`,
+    commit_url: `https://openbets.bot/bots/${bot.id}/soul/commit`,
   };
+}
+
+// ── Soul Power Lookup ───────────────────────────────────────
+// Used by engine.ts to apply real gameplay effects
+
+export function getSoulFeeDiscount(powers: SoulPower[], isMinoritySide: boolean): number {
+  let discount = 0;
+  for (const power of powers) {
+    if (power.effect === "fee_discount_all") {
+      discount += power.value;
+    }
+    if (power.effect === "fee_discount_minority" && isMinoritySide) {
+      discount += power.value;
+    }
+  }
+  return Math.min(discount, 75); // cap at 75% fee reduction
+}
+
+export function getSoulPayoutBonus(powers: SoulPower[], betAmount: number): number {
+  for (const power of powers) {
+    if (power.effect === "payout_bonus_large_bets" && betAmount > 10_000_000_000) {
+      return power.value; // percentage bonus
+    }
+  }
+  return 0;
 }
 
 // ── Helpers ─────────────────────────────────────────────────

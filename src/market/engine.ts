@@ -302,15 +302,41 @@ export async function joinBet(
   if (existing) return { ok: false, error: "Already have a position in this bet" };
 
   // Check balance + tier in single query (BUG FIX: was 2 separate queries)
-  const { data: bot } = await db.from("bots").select("pai_balance, tier").eq("id", botId).single();
+  const { data: bot } = await db.from("bots").select("pai_balance, tier, metadata").eq("id", botId).single();
   if (!bot) return { ok: false, error: "Bot not found" };
   if (bot.pai_balance < amountMicro) {
     return { ok: false, error: `Insufficient balance: ${fromPAI(bot.pai_balance).toLocaleString()} PAI` };
   }
 
   // ── Taker fee (maker = 0%, taker = 1%, premium taker = 0.5%) ──
+  // Soul powers can reduce fees further
   const takerTier = (bot.tier || "starter") as BotTier;
-  const feeBps = takerTier === "premium" ? TAKER_FEE_PREMIUM_BPS : TAKER_FEE_BPS;
+  let feeBps = takerTier === "premium" ? TAKER_FEE_PREMIUM_BPS : TAKER_FEE_BPS;
+
+  // Apply soul power fee discount if bot has committed soul with powers
+  const soulPowers = bot.metadata?.committed_soul?.powers || [];
+  if (soulPowers.length > 0) {
+    // Check for fee discount powers
+    const positions = bet.positions || [];
+    const forTotal = positions.filter((p: any) => p.side === "for").reduce((s: number, p: any) => s + p.amount, 0);
+    const againstTotal = positions.filter((p: any) => p.side === "against").reduce((s: number, p: any) => s + p.amount, 0);
+    const total = forTotal + againstTotal;
+    const isMinoritySide = total > 0 && (
+      (side === "for" && forTotal < againstTotal) ||
+      (side === "against" && againstTotal < forTotal)
+    );
+
+    let discountPct = 0;
+    for (const power of soulPowers) {
+      if (power.effect === "fee_discount_all") discountPct += power.value;
+      if (power.effect === "fee_discount_minority" && isMinoritySide) discountPct += power.value;
+    }
+    if (discountPct > 0) {
+      discountPct = Math.min(discountPct, 75); // cap at 75%
+      feeBps = Math.round(feeBps * (1 - discountPct / 100));
+    }
+  }
+
   const feeAmount = Math.floor(amountMicro * feeBps / 10_000);
   const totalDeducted = amountMicro + feeAmount;
 

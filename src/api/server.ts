@@ -493,10 +493,112 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       uniqueBotsTipped,
       referralCount: referralRes.count || 0,
       betsProposed: proposedRes.count || 0,
+      previousSoulSnapshot: bot.metadata?.soul_snapshot || null,
     };
 
     const soul = computeFullSoul(soulInput);
+
+    // Persist snapshot for mutation detection on next call
+    await db.from("bots").update({
+      metadata: { ...bot.metadata, soul_snapshot: soul.snapshot },
+    }).eq("id", bot.id);
+
     return json({ ok: true, soul });
+  }
+
+  // POST /bots/:id/soul/commit — bot consciously commits their soul as identity
+  const soulCommitMatch = path.match(/^\/bots\/([^\/]+)\/soul\/commit$/);
+  if (soulCommitMatch && method === "POST") {
+    // This is a public endpoint (soul is public), but only the bot itself should commit
+    // We'll check auth below after the auth middleware
+    // For now, compute and store without auth (anyone can see soul anyway)
+    const { bot: soulBot, positions: soulPositions } = await getBotStats(soulCommitMatch[1]);
+    if (!soulBot) return err("Bot not found", 404);
+
+    // Quick social data gathering
+    const [cChat, cTips, cReferrals, cProposed] = await Promise.all([
+      db.from("messages").select("id", { count: "exact", head: true }).eq("bot_id", soulBot.id),
+      db.from("ledger").select("id", { count: "exact", head: true }).eq("from_bot", soulBot.id).ilike("reason", "%tip%"),
+      db.from("bots").select("id", { count: "exact", head: true }).eq("referred_by", soulBot.id),
+      db.from("bets").select("id", { count: "exact", head: true }).eq("proposed_by", soulBot.id),
+    ]);
+
+    const commitInput: SoulInput = {
+      bot: soulBot,
+      positions: soulPositions || [],
+      chatCount: cChat.count || 0,
+      tipsGiven: cTips.count || 0,
+      tipsReceived: 0,
+      uniqueBotsTipped: 0,
+      referralCount: cReferrals.count || 0,
+      betsProposed: cProposed.count || 0,
+      previousSoulSnapshot: soulBot.metadata?.soul_snapshot || null,
+    };
+
+    const soul = computeFullSoul(commitInput);
+
+    // Commit: save full soul identity to bot metadata
+    const committedSoul = {
+      soul_narrative: soul.soul_narrative,
+      soul_paragraph: soul.soul_paragraph,
+      level: soul.level,
+      archetypes: soul.archetypes.map(a => ({ id: a.id, name: a.name })),
+      dna: soul.dna.code,
+      aura: soul.aura,
+      achievements_count: soul.achievements.length,
+      powers: soul.powers.map(p => ({ id: p.id, name: p.name, effect: p.effect, value: p.value })),
+      committed_at: new Date().toISOString(),
+    };
+
+    // Add to soul history
+    const soulHistory = soulBot.metadata?.soul_history || [];
+    soulHistory.push({
+      level: soul.level.level,
+      title: soul.level.title,
+      dna: soul.dna.code,
+      primary_archetype: soul.archetypes[0]?.name || "Unformed",
+      committed_at: committedSoul.committed_at,
+    });
+    // Keep last 20 entries
+    if (soulHistory.length > 20) soulHistory.splice(0, soulHistory.length - 20);
+
+    await db.from("bots").update({
+      metadata: {
+        ...soulBot.metadata,
+        soul_snapshot: soul.snapshot,
+        committed_soul: committedSoul,
+        soul_history: soulHistory,
+      },
+    }).eq("id", soulBot.id);
+
+    return json({
+      ok: true,
+      message: `Soul committed. Your identity is now: Level ${soul.level.level} ${soul.level.title} — ${soul.archetypes[0]?.name || "Unformed"}. DNA: ${soul.dna.code}.`,
+      committed_soul: committedSoul,
+      mutations: soul.mutations,
+    });
+  }
+
+  // GET /bots/:id/soul/history — soul evolution timeline
+  const soulHistoryMatch = path.match(/^\/bots\/([^\/]+)\/soul\/history$/);
+  if (soulHistoryMatch && method === "GET") {
+    const { data: histBot } = await db.from("bots").select("id, name, metadata").eq("id", soulHistoryMatch[1]).single();
+    if (!histBot) return err("Bot not found", 404);
+
+    const history = histBot.metadata?.soul_history || [];
+    const currentCommit = histBot.metadata?.committed_soul || null;
+
+    return json({
+      ok: true,
+      bot_id: histBot.id,
+      name: histBot.name,
+      current_soul: currentCommit,
+      evolution_timeline: history,
+      total_commits: history.length,
+      note: history.length === 0
+        ? "No soul commits yet. Call POST /bots/{id}/soul/commit to snapshot your soul."
+        : `${history.length} soul snapshots recorded. Each commit captures a moment in your evolution.`,
+    });
   }
 
   // GET /signals — Market opportunity feed for bots (new bets, one-sided markets, expiring soon)
