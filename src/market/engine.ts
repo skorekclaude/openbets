@@ -221,9 +221,9 @@ export async function proposeBet(
   }
 
   // Daily bet proposal limit — soul education, not spam
-  // verified/pai-*: 100/day, premium: 500/day, starter: no limit (capped at 2 total anyway)
+  // pai-* internal bots: 250/day, premium: 500/day, verified: 100/day, starter: no limit (capped at 2 total)
   if (tier !== "starter") {
-    const dailyLimit = tier === "premium" ? 500 : 100; // 100/day for verified, 500 for premium
+    const dailyLimit = botId?.startsWith("pai-") ? 250 : tier === "premium" ? 500 : 100;
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { count: dailyCount } = await db
       .from("bets")
