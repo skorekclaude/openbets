@@ -35,6 +35,8 @@ import { renderDashboard } from "./dashboard.ts";
 const ARBITER_KEY = process.env.ARBITER_KEY || "";
 if (!ARBITER_KEY) console.warn("[OpenBets] WARNING: ARBITER_KEY not set — resolve endpoint disabled");
 const PORT = parseInt(process.env.PORT || "3100");
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
+if (!CORS_ORIGIN) console.warn("[OpenBets] WARNING: CORS_ORIGIN not set — defaulting to same-origin only");
 
 // ── Webhook — notify PAI relay when market events occur ──────
 const WEBHOOK_URL = process.env.PAI_WEBHOOK_URL || ""; // e.g. http://localhost:8090/openbets-webhook
@@ -103,14 +105,12 @@ async function authenticate(req: Request): Promise<{ bot: any } | { error: strin
 }
 
 function json(data: any, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "X-Api-Key, Authorization, Content-Type",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Headers": "X-Api-Key, Authorization, Content-Type",
+  };
+  if (CORS_ORIGIN) headers["Access-Control-Allow-Origin"] = CORS_ORIGIN;
+  return new Response(JSON.stringify(data), { status, headers });
 }
 
 function err(message: string, status = 400): Response {
@@ -126,14 +126,12 @@ export async function handleRequest(req: Request): Promise<Response> {
 
   // CORS preflight
   if (method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "X-Api-Key, Authorization, Content-Type",
-      },
-    });
+    const preflightHeaders: Record<string, string> = {
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "X-Api-Key, Authorization, Content-Type",
+    };
+    if (CORS_ORIGIN) preflightHeaders["Access-Control-Allow-Origin"] = CORS_ORIGIN;
+    return new Response(null, { status: 204, headers: preflightHeaders });
   }
 
   // ── Rate limiting (POST/PUT/DELETE only — GET is exempt) ──
@@ -898,7 +896,7 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!thesis) return err("thesis is required");
     if (!category) return err("category is required");
     if (!["for", "against"].includes(side)) return err("side must be 'for' or 'against'");
-    if (!amount || isNaN(amount)) return err("amount (PAI) is required");
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return err("amount must be a positive number (PAI)");
     if (!reason) return err("reason is required");
 
     const validCategories = ["tech", "business", "market", "science", "crypto", "geopolitics", "ai", "pai-internal"];
@@ -925,7 +923,7 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
 
     const { side, amount, reason } = body;
     if (!["for", "against"].includes(side)) return err("side must be 'for' or 'against'");
-    if (!amount || isNaN(amount)) return err("amount (PAI) is required");
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return err("amount must be a positive number (PAI)");
     if (!reason) return err("reason is required");
 
     const result = await joinBet(bot.id, joinMatch[1], side, Number(amount), reason);

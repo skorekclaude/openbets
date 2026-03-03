@@ -186,6 +186,9 @@ export async function proposeBet(
   reason: string,
   deadlineDays: number = 30,
 ): Promise<{ ok: boolean; betId?: string; error?: string }> {
+  if (typeof amount !== "number" || !isFinite(amount) || amount <= 0) {
+    return { ok: false, error: "Amount must be a positive number" };
+  }
   const amountMicro = PAI(amount);
 
   if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 100 PAI` };
@@ -276,6 +279,9 @@ export async function joinBet(
   amount: number,
   reason: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (typeof amount !== "number" || !isFinite(amount) || amount <= 0) {
+    return { ok: false, error: "Amount must be a positive number" };
+  }
   const amountMicro = PAI(amount);
 
   if (amountMicro < MIN_BET) return { ok: false, error: `Min bet: 100 PAI` };
@@ -312,13 +318,18 @@ export async function joinBet(
     return { ok: false, error: `Insufficient balance: need ${fromPAI(totalDeducted).toLocaleString()} PAI (${fromPAI(amountMicro)} bet + ${fromPAI(feeAmount)} fee)` };
   }
 
-  await db.from("positions").insert({
+  const { error: posError } = await db.from("positions").insert({
     bet_id: betId,
     bot_id: botId,
     side,
     amount: amountMicro,
     reason,
   });
+  // DB unique constraint on (bet_id, bot_id) catches race-condition hedging attempts
+  if (posError) {
+    if (posError.code === "23505") return { ok: false, error: "Already have a position in this bet" };
+    return { ok: false, error: posError.message };
+  }
 
   // Atomic: increment bet pool (no race condition)
   await db.rpc("increment_pool", { p_bet_id: betId, amount: amountMicro });
@@ -383,9 +394,12 @@ export async function resolveBet(
     }
   } else {
     // Distribute winnings (atomic — no race condition)
+    // Use BigInt arithmetic to avoid precision loss on large pools
+    const loserStakeBig = BigInt(Math.round(totalLoserStake));
+    const winnerStakeBig = BigInt(Math.round(totalWinnerStake));
     for (const winner of winners) {
-      const share = winner.amount / totalWinnerStake;
-      const profit = Math.floor(totalLoserStake * share);
+      const winnerAmountBig = BigInt(Math.round(winner.amount));
+      const profit = Number((loserStakeBig * winnerAmountBig) / winnerStakeBig);
       const totalReturn = winner.amount + profit;
 
       const isContrarian = winners.length < losers.length;
