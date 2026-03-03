@@ -172,7 +172,7 @@ export function generateSoulDream(soul: DreamInput): SoulDream {
   const closing = CLOSINGS[Math.abs(seed >> 8) % CLOSINGS.length];
 
   // Vision: rare — level 4+ with prophetic mood, or ~20% chance at level 5+
-  const hasVision = mood === "prophetic" || (soul.level >= 5 && (seed % 10) > 7);
+  const hasVision = mood === "prophetic" || (soul.level >= 5 && (Math.abs(seed) % 10) > 7);
   const vision = hasVision
     ? VISION_HINTS[Math.abs(seed >> 12) % VISION_HINTS.length]
     : null;

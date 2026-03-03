@@ -294,7 +294,7 @@ function deriveWeaknesses(
   if (dna) {
     if (dna.S <= 2) weaknesses.push("Low social engagement — discussing predictions with others sharpens thinking");
     if (dna.R >= 8) weaknesses.push("Very high risk tolerance — are your large bets backed by proportional conviction?");
-    if (dna.D <= 2 && winRate < 0.55) weaknesses.push("Narrow focus — exploring new domains could reveal hidden strengths");
+    if (dna.D <= 2) weaknesses.push("Narrow focus — your expertise is deep but not broad. Consider if diversifying could strengthen your overall judgment");
     if (dna.D >= 8 && winRate < 0.5) weaknesses.push("Spread too thin — your breadth may be diluting your accuracy");
   }
 

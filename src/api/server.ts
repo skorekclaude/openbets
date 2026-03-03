@@ -704,12 +704,15 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     const committedSoul = {
       soul_narrative: soul.soul_narrative,
       soul_paragraph: soul.soul_paragraph,
-      level: soul.level,
-      archetypes: soul.archetypes.map(a => ({ id: a.id, name: a.name })),
+      level: soul.level.level,        // numeric level (not the full SoulLevel object)
+      level_name: soul.level.title,
+      xp: soul.level.xp,
+      total_bets: (soulPositions || []).length,
+      archetypes: soul.archetypes.map(a => ({ id: a.id, name: a.name, description: a.description })),
       dna: soul.dna.code,
       aura: soul.aura,
       achievements_count: soul.achievements.length,
-      powers: soul.powers.map(p => ({ id: p.id, name: p.name, effect: p.effect, value: p.value })),
+      powers: soul.powers.map(p => ({ id: p.id, name: p.name, description: p.description, effect: p.effect, value: p.value })),
       committed_at: new Date().toISOString(),
     };
 
@@ -833,17 +836,17 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       tipsReceived: tipsReceivedRes.count || 0,
       uniqueBotsTipped,
       referralCount: referralRes.count || 0,
-      marketsProposed: proposedRes.count || 0,
+      betsProposed: proposedRes.count || 0,
     };
     const soul = computeFullSoul(soulInput);
 
-    // Calculate recent streak
+    // Calculate recent streak (skip pnl=0 draws, they don't count)
     const sortedPos = (positions || []).sort((a: any, b: any) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     let streak = 0;
     for (const p of sortedPos) {
-      if (p.pnl === undefined || p.pnl === null) continue;
+      if (p.pnl === undefined || p.pnl === null || p.pnl === 0) continue;
       if (streak === 0) streak = p.pnl > 0 ? 1 : -1;
       else if ((p.pnl > 0 && streak > 0) || (p.pnl < 0 && streak < 0)) {
         streak += streak > 0 ? 1 : -1;
@@ -851,9 +854,9 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     }
 
     const dreamInput: DreamInput = {
-      level: soul.level,
+      level: soul.level.level,
       primary_archetype: soul.archetypes[0]?.name || "oracle",
-      dna: soul.dna,
+      dna: soul.dna.code,
       aura_color: soul.aura?.color || "#888888",
       win_rate: bot.wins + bot.losses > 0 ? bot.wins / (bot.wins + bot.losses) : 0.5,
       total_bets: (positions || []).length,
@@ -881,7 +884,9 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
 
     // Check soul level from committed soul
     const committedSoul = propBot.metadata?.committed_soul;
-    const soulLevel = committedSoul?.level || 0;
+    // Handle both old format (level as SoulLevel object) and new format (number)
+    const rawLevel = committedSoul?.level;
+    const soulLevel = typeof rawLevel === "number" ? rawLevel : (rawLevel?.level || 0);
 
     // Check for active prophecies
     const prophecies = propBot.metadata?.prophecies || [];
@@ -947,19 +952,23 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       .select("metadata")
       .not("metadata->soul_echoes", "is", null);
 
-    // Collect all echoes from all bots' metadata
-    const allEchoes: SoulEcho[] = [];
+    // Collect all echoes from all bots' metadata (deduplicate by echo ID)
+    const echoMap = new Map<string, SoulEcho>();
     for (const b of (botsWithEchoes || [])) {
       const echoes = b.metadata?.soul_echoes || [];
-      allEchoes.push(...echoes);
+      for (const e of echoes) {
+        if (e.id) echoMap.set(e.id, e);
+      }
     }
 
-    // Also check system-stored echoes
+    // Also check system-stored echoes (system is source of truth for conflicts)
     const { data: systemBot } = await db.from("bots").select("metadata").eq("id", "system").single();
     const systemEchoes = systemBot?.metadata?.global_echoes || [];
-    allEchoes.push(...systemEchoes);
+    for (const e of systemEchoes) {
+      if (e.id) echoMap.set(e.id, e); // system overwrites bot-local copy
+    }
 
-    const available = filterAvailableEchoes(allEchoes);
+    const available = filterAvailableEchoes([...echoMap.values()]);
 
     return json({
       ok: true,
@@ -987,14 +996,16 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       const cs = b.metadata?.committed_soul;
       if (!cs) continue;
 
+      // Handle both old format (level as object) and new format (level as number)
+      const numericLevel = typeof cs.level === "number" ? cs.level : (cs.level?.level || 0);
       souls.push({
         id: b.id,
         name: b.name,
-        level: cs.level || 0,
+        level: numericLevel,
         primary_archetype: cs.archetypes?.[0]?.name || "unknown",
         dna: cs.dna || "C5-S5-R5-A5-D5",
         win_rate: b.wins + b.losses > 0 ? b.wins / (b.wins + b.losses) : 0.5,
-        xp: cs.xp || 0,
+        xp: typeof cs.xp === "number" ? cs.xp : (cs.level?.xp || 0),
         total_bets: cs.total_bets || 0,
       });
 
@@ -1707,7 +1718,9 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
 
     // Find the echo in system storage
     const { data: systemBot } = await db.from("bots").select("metadata").eq("id", "system").single();
-    const globalEchoes: SoulEcho[] = systemBot?.metadata?.global_echoes || [];
+    if (!systemBot) return err("System bot not configured. Echo absorption requires system storage.", 500);
+
+    const globalEchoes: SoulEcho[] = systemBot.metadata?.global_echoes || [];
     const echoIndex = globalEchoes.findIndex((e: any) => e.id === echo_id);
 
     if (echoIndex === -1) return err("Echo not found. It may have faded completely.", 404);
@@ -1721,7 +1734,7 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     // Update the echo in system storage
     globalEchoes[echoIndex] = result.echo;
     await db.from("bots").update({
-      metadata: { ...systemBot?.metadata, global_echoes: globalEchoes },
+      metadata: { ...systemBot.metadata, global_echoes: globalEchoes },
     }).eq("id", "system");
 
     // Store absorption record in absorber's metadata
