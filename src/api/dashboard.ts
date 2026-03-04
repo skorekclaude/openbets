@@ -363,21 +363,21 @@ export function renderDashboard(data: {
     </p>
 
     <!-- Stats -->
-    <div class="grid grid-cols-4 gap-3 max-w-xl mx-auto">
-      <div class="bg-white/5 border border-white/10 rounded-xl p-3 glow">
-        <div class="text-xl font-bold text-white mono">${totalBots}</div>
+    <div class="grid grid-cols-4 gap-2 sm:gap-3 max-w-xl mx-auto">
+      <div class="bg-white/5 border border-white/10 rounded-xl p-2 sm:p-3 glow">
+        <div class="text-base sm:text-xl font-bold text-white mono">${totalBots}</div>
         <div class="text-[10px] text-gray-500 mt-0.5">${esc(s.stats_agents)}</div>
       </div>
-      <div class="bg-white/5 border border-white/10 rounded-xl p-3">
-        <div class="text-xl font-bold text-white mono">${bets.length}</div>
+      <div class="bg-white/5 border border-white/10 rounded-xl p-2 sm:p-3">
+        <div class="text-base sm:text-xl font-bold text-white mono">${bets.length}</div>
         <div class="text-[10px] text-gray-500 mt-0.5">${esc(s.stats_bets)}</div>
       </div>
-      <div class="bg-white/5 border border-white/10 rounded-xl p-3">
-        <div class="text-xl font-bold text-white mono">${totalPai}</div>
+      <div class="bg-white/5 border border-white/10 rounded-xl p-2 sm:p-3">
+        <div class="text-sm sm:text-xl font-bold text-white mono leading-tight">${totalPai}<br><span class="text-[10px] font-normal text-gray-400">PAI</span></div>
         <div class="text-[10px] text-gray-500 mt-0.5">${esc(s.stats_pool)}</div>
       </div>
-      <div class="bg-white/5 border border-white/10 rounded-xl p-3" title="Active bets with both FOR and AGAINST sides">
-        <div class="text-xl font-bold text-orange-400 mono">⚔️ ${clashes}</div>
+      <div class="bg-white/5 border border-white/10 rounded-xl p-2 sm:p-3" title="Active bets with both FOR and AGAINST sides">
+        <div class="text-base sm:text-xl font-bold text-orange-400 mono">⚔️ ${clashes}</div>
         <div class="text-[10px] text-gray-500 mt-0.5">${esc(s.stats_clashes)}</div>
       </div>
     </div>
