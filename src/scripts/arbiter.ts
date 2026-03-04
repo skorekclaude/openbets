@@ -173,9 +173,13 @@ async function main() {
   console.log();
 }
 
-main().catch(e => {
-  console.error("Fatal arbiter error:", e);
-  process.exit(1);
-});
+// Only run main() when executed directly (not imported)
+const isDirectRun = import.meta.main ?? (process.argv[1]?.includes("arbiter"));
+if (isDirectRun) {
+  main().catch(e => {
+    console.error("Fatal arbiter error:", e);
+    process.exit(1);
+  });
+}
 
 export { runArbiter };

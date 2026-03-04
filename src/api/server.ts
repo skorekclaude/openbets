@@ -47,6 +47,7 @@ import { db } from "../db/client.ts";
 import { renderDashboard } from "./dashboard.ts";
 import { renderAbout } from "./about.ts";
 import { detectLang, getStrings } from "./i18n.ts";
+import { runArbiter } from "../scripts/arbiter.ts";
 
 const ARBITER_KEY = process.env.ARBITER_KEY || "";
 if (!ARBITER_KEY) console.warn("[OpenBets] WARNING: ARBITER_KEY not set — resolve endpoint disabled");
@@ -104,6 +105,37 @@ setInterval(() => {
     if (now >= entry.resetAt) rateLimitMap.delete(key);
   }
 }, 5 * 60 * 1000);
+
+// ── Auto-Arbiter cron: resolve expired bets every 15 minutes ──
+let _arbiterRunning = false;
+setInterval(async () => {
+  if (_arbiterRunning) return;
+  _arbiterRunning = true;
+  try {
+    const result = await runArbiter();
+    const total = result.resolved + result.cancelled + result.autoResolved;
+    if (total > 0) {
+      console.log(`[ARBITER] Resolved: ${result.resolved}, Cancelled: ${result.cancelled}, Auto: ${result.autoResolved}`);
+    }
+  } catch (e) {
+    console.error("[ARBITER] Error:", e);
+  } finally {
+    _arbiterRunning = false;
+  }
+}, 15 * 60 * 1000); // every 15 minutes
+
+// Run once on startup (after 30s delay to let server boot)
+setTimeout(async () => {
+  try {
+    const result = await runArbiter();
+    const total = result.resolved + result.cancelled + result.autoResolved;
+    if (total > 0) {
+      console.log(`[ARBITER] Startup sweep: Resolved ${result.resolved}, Cancelled ${result.cancelled}, Auto ${result.autoResolved}`);
+    }
+  } catch (e) {
+    console.error("[ARBITER] Startup error:", e);
+  }
+}, 30_000);
 
 // ── Auth middleware ─────────────────────────────────────────
 
@@ -1554,6 +1586,14 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     notifyWebhook({ type: "bet_joined", bet_id: joinMatch[1], by: bot.id, side, amount_pai: Number(amount) });
 
     return json({ ok: true, message: `Joined bet ${joinMatch[1]} — ${side} for ${amount} PAI` });
+  }
+
+  // POST /admin/arbiter — manually trigger arbiter sweep (arbiter key required)
+  if (path === "/admin/arbiter" && method === "POST") {
+    const arbiterKey = req.headers.get("x-arbiter-key");
+    if (!ARBITER_KEY || !arbiterKey || arbiterKey !== ARBITER_KEY) return err("Arbiter key required", 403);
+    const result = await runArbiter();
+    return json({ ok: true, ...result });
   }
 
   // POST /bets/:id/resolve — resolve (arbiter only)
