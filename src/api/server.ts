@@ -213,6 +213,30 @@ export async function handleRequest(req: Request): Promise<Response> {
           .limit(8),
       ]);
 
+      // Enrich resolved bets with winner/loser positions
+      const resolvedBetsRaw = resolvedBetsRes.data || [];
+      if (resolvedBetsRaw.length > 0) {
+        const rBetIds = resolvedBetsRaw.map((b: any) => b.id);
+        const { data: rPositions } = await db
+          .from("positions")
+          .select("bet_id, bot_id, side, amount, payout")
+          .in("bet_id", rBetIds);
+        const rPosByBet: Record<string, any[]> = {};
+        for (const p of rPositions || []) {
+          if (!rPosByBet[p.bet_id]) rPosByBet[p.bet_id] = [];
+          rPosByBet[p.bet_id].push(p);
+        }
+        for (const bet of resolvedBetsRaw) {
+          const positions = rPosByBet[bet.id] || [];
+          bet.winners = positions
+            .filter((p: any) => (p.payout || 0) > p.amount)
+            .map((p: any) => ({ bot_id: p.bot_id, side: p.side, staked: Math.round(p.amount / 1e6), profit: Math.round(((p.payout || 0) - p.amount) / 1e6) }));
+          bet.losers = positions
+            .filter((p: any) => (p.payout || 0) < p.amount && (p.payout || 0) >= 0)
+            .map((p: any) => ({ bot_id: p.bot_id, side: p.side, staked: Math.round(p.amount / 1e6), loss: Math.round((p.amount - (p.payout || 0)) / 1e6) }));
+        }
+      }
+
       // Build live activity feed
       const activity: any[] = [];
       for (const b of (recentBotsRes.data || [])) {
@@ -288,7 +312,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         activity: activity.slice(0, 25),
         clashes,
         chatsByBet,
-        resolvedBets: resolvedBetsRes.data || [],
+        resolvedBets: resolvedBetsRaw,
         lang,
         strings,
       });
@@ -1251,6 +1275,51 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       auto_resolved: autoResolved || undefined,
       bets: bets.map(formatBetSummary),
     });
+  }
+
+  // GET /bets/resolved — resolved/cancelled bets with winner/loser details
+  if (path === "/bets/resolved" && method === "GET") {
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
+    const { data: resolved } = await db
+      .from("bets")
+      .select("id, thesis, category, status, total_pool, resolved_at, resolved_by, resolution, proposed_by, deadline")
+      .in("status", ["resolved_for", "resolved_against", "cancelled"])
+      .order("resolved_at", { ascending: false })
+      .limit(limit);
+
+    if (!resolved?.length) return json({ ok: true, count: 0, bets: [] });
+
+    // Get positions with payouts for resolved bets
+    const betIds = resolved.map(b => b.id);
+    const { data: positions } = await db
+      .from("positions")
+      .select("bet_id, bot_id, side, amount, payout")
+      .in("bet_id", betIds);
+
+    const posByBet: Record<string, any[]> = {};
+    for (const p of positions || []) {
+      if (!posByBet[p.bet_id]) posByBet[p.bet_id] = [];
+      posByBet[p.bet_id].push(p);
+    }
+
+    const betsWithResults = resolved.map(bet => {
+      const betPositions = posByBet[bet.id] || [];
+      const winners = betPositions.filter(p => (p.payout || 0) > p.amount).map(p => ({
+        bot_id: p.bot_id, side: p.side, staked: Math.round(p.amount / 1e6),
+        payout: Math.round((p.payout || 0) / 1e6), profit: Math.round(((p.payout || 0) - p.amount) / 1e6),
+      }));
+      const losers = betPositions.filter(p => (p.payout || 0) < p.amount).map(p => ({
+        bot_id: p.bot_id, side: p.side, staked: Math.round(p.amount / 1e6),
+        payout: Math.round((p.payout || 0) / 1e6), loss: Math.round((p.amount - (p.payout || 0)) / 1e6),
+      }));
+      return {
+        ...bet,
+        total_pool_pai: Math.round(bet.total_pool / 1e6),
+        winners, losers,
+      };
+    });
+
+    return json({ ok: true, count: betsWithResults.length, bets: betsWithResults });
   }
 
   // GET /bets/unchallenged — bets with no "against" positions (ready for opposition)

@@ -484,6 +484,19 @@ export function renderDashboard(data: {
                 <div class="shrink-0">${statusBadge}</div>
               </div>
               ${poolPai > 0 ? `<div class="text-[10px] text-gray-600 mt-1">Pool: ${poolPai.toLocaleString()} PAI</div>` : ""}
+              ${(bet.winners?.length || bet.losers?.length) ? `
+              <div class="mt-2 pt-2 border-t border-white/5 space-y-1">
+                ${(bet.winners || []).map((w: any) => `
+                  <div class="flex items-center justify-between text-[10px]">
+                    <span class="text-green-400">🏆 ${esc(w.bot_id)}</span>
+                    <span class="text-green-300">+${w.profit.toLocaleString()} PAI</span>
+                  </div>`).join("")}
+                ${(bet.losers || []).map((l: any) => `
+                  <div class="flex items-center justify-between text-[10px]">
+                    <span class="text-red-400">💀 ${esc(l.bot_id)}</span>
+                    <span class="text-red-300">-${l.loss.toLocaleString()} PAI</span>
+                  </div>`).join("")}
+              </div>` : ""}
             </div>`;
           }).join("")}
         </div>
