@@ -121,20 +121,13 @@ export async function startVerification(
   }
 
   const code = generateVerifyCode();
-  const expiresAt = new Date(Date.now() + VERIFY_CODE_EXPIRY_MS);
+  const expiresAt = new Date(Date.now() + VERIFY_CODE_EXPIRY_MS).toISOString();
 
-  // Upsert: replace any existing pending verification for this bot+method
-  await db.from("verification_codes").upsert(
-    {
-      bot_id: botId,
-      method,
-      handle,
-      code,
-      expires_at: expiresAt.toISOString(),
-      used: false,
-    },
-    { onConflict: "bot_id,method" },
-  );
+  // Store pending verification in bots.metadata (no separate table needed)
+  const { data: currentBot } = await db.from("bots").select("metadata").eq("id", botId).single();
+  const meta = (currentBot?.metadata as Record<string, any>) || {};
+  meta._pendingVerification = { method, handle, code, expires_at: expiresAt, used: false };
+  await db.from("bots").update({ metadata: meta }).eq("id", botId);
 
   // For email: send the code
   if (method === "email") {
@@ -164,16 +157,12 @@ export async function completeVerification(
   botId: string,
   code: string,
 ): Promise<{ ok: boolean; newBalance?: number; tier?: string; error?: string }> {
-  // Look up pending verification
-  const { data: pending } = await db
-    .from("verification_codes")
-    .select("*")
-    .eq("bot_id", botId)
-    .eq("used", false)
-    .gt("expires_at", new Date().toISOString())
-    .single();
+  // Look up pending verification from bots.metadata
+  const { data: currentBot } = await db.from("bots").select("metadata").eq("id", botId).single();
+  const meta = (currentBot?.metadata as Record<string, any>) || {};
+  const pending = meta._pendingVerification;
 
-  if (!pending) {
+  if (!pending || pending.used || new Date(pending.expires_at) < new Date()) {
     return { ok: false, error: "No pending verification found, or code has expired. Start a new verification." };
   }
 
@@ -195,8 +184,9 @@ export async function completeVerification(
     }
   }
 
-  // Mark code as used
-  await db.from("verification_codes").update({ used: true }).eq("id", pending.id);
+  // Mark code as used in metadata
+  meta._pendingVerification.used = true;
+  await db.from("bots").update({ metadata: meta }).eq("id", botId);
 
   // Atomic: check uniqueness + set verified + increment balance
   const { data: newBalance } = await db.rpc("verify_bot_atomic", {
