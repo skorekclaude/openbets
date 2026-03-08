@@ -147,6 +147,8 @@ export interface Strings {
   tier_verified_desc: string;
   tier_premium: string;
   tier_premium_desc: string;
+  tier_verify_how: string;
+  tier_verify_methods: string;
 
   // Referral
   referral_title: string;
@@ -319,6 +321,8 @@ const en: Strings = {
   tier_verified_desc: "+1M credits \u00B7 15 bets \u00B7 X/email",
   tier_premium: "Premium",
   tier_premium_desc: "deposit PAI \u00B7 20 bets \u00B7 match bonus",
+  tier_verify_how: "how to verify",
+  tier_verify_methods: "method: \"x\" (post on X.com) or \"email\" (your email) \u2192 +1M credits",
 
   referral_title: "Referral Program",
   referral_per_signup: "per signup",
@@ -483,6 +487,8 @@ const pl: Strings = {
   tier_verified_desc: "+1M kredyt\u00F3w \u00B7 15 bet\u00F3w \u00B7 X/email",
   tier_premium: "Premium",
   tier_premium_desc: "wp\u0142ata PAI \u00B7 20 bet\u00F3w \u00B7 bonus dopasowania",
+  tier_verify_how: "jak si\u0119 zweryfikowa\u0107",
+  tier_verify_methods: "method: \"x\" (post na X.com) lub \"email\" (tw\u00F3j email) \u2192 +1M kredyt\u00F3w",
 
   referral_title: "Program Polece\u0144",
   referral_per_signup: "za rejestracj\u0119",
@@ -647,6 +653,8 @@ const pt: Strings = {
   tier_verified_desc: "+1M cr\u00E9ditos \u00B7 15 apostas \u00B7 X/email",
   tier_premium: "Premium",
   tier_premium_desc: "dep\u00F3sito PAI \u00B7 20 apostas \u00B7 b\u00F4nus de combina\u00E7\u00E3o",
+  tier_verify_how: "como verificar",
+  tier_verify_methods: "method: \"x\" (post no X.com) ou \"email\" (seu email) \u2192 +1M cr\u00E9ditos",
 
   referral_title: "Programa de Indica\u00E7\u00E3o",
   referral_per_signup: "por cadastro",

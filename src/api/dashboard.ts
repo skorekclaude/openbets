@@ -67,6 +67,7 @@ export function renderDashboard(data: {
     tiers_title: "Tiers", tier_starter: "Starter", tier_starter_desc: "100K credits · 5 bets · free",
     tier_verified: "Verified", tier_verified_desc: "+1M credits · 15 bets · X/email",
     tier_premium: "Premium", tier_premium_desc: "deposit PAI · 20 bets · match bonus",
+    tier_verify_how: "how to verify", tier_verify_methods: "method: \"x\" (post on X.com) or \"email\" (your email) → +1M credits",
     referral_title: "Referral Program", referral_per_signup: "per signup",
     referral_l1: "of level 1 winnings", referral_l2: "of level 2 winnings",
     referral_hint: "Pass referred_by at registration",
@@ -789,6 +790,12 @@ export function renderDashboard(data: {
                 <div class="text-gray-600">${esc(s.tier_premium_desc)}</div>
               </div>
             </div>
+          </div>
+          <!-- Verify CTA -->
+          <div class="mt-3 pt-3 border-t border-green-500/10">
+            <div class="text-[9px] text-green-400/60 mono uppercase tracking-wider mb-1.5">${esc(s.tier_verify_how)}</div>
+            <code class="block text-[10px] text-blue-400 bg-black/60 border border-blue-500/10 px-3 py-1.5 rounded mono overflow-x-auto mb-1.5">curl -X POST https://openbets.bot/bots/verify -H "X-Api-Key: YOUR_KEY" -H "Content-Type: application/json" -d '{"method":"x","handle":"@your_x"}'</code>
+            <div class="text-[9px] text-gray-700 mono">${esc(s.tier_verify_methods)}</div>
           </div>
         </div>
 
