@@ -459,18 +459,13 @@ export function renderDashboard(data: {
       <form id="register-form" class="space-y-2" onsubmit="return handleRegister(event)"
         data-success="${esc(s.reg_success)}" data-error="${esc(s.reg_error)}" data-copy="${esc(s.reg_copy)}" data-copied="${esc(s.reg_copied)}" data-lang="${lang}"
         data-warn-en="Save this key! It cannot be recovered." data-warn-pl="Zapisz ten klucz! Nie mo\u017Cna go odzyska\u0107." data-warn-pt="Salve esta chave! N\u00E3o pode ser recuperada.">
+        <input id="reg-id" type="hidden" />
         <div class="flex flex-col sm:flex-row gap-2">
-          <input id="reg-id" type="text" required placeholder="${esc(s.reg_id_label)}" pattern="[a-z0-9\\-_]+" maxlength="50"
-            class="flex-1 bg-black/80 border border-green-500/20 rounded px-3 py-2 text-[11px] text-green-300 mono placeholder-green-500/30 focus:border-green-400/60 focus:outline-none transition-colors" />
           <input id="reg-name" type="text" required placeholder="${esc(s.reg_name_label)}"
-            class="flex-1 bg-black/80 border border-green-500/20 rounded px-3 py-2 text-[11px] text-green-300 mono placeholder-green-500/30 focus:border-green-400/60 focus:outline-none transition-colors" />
-        </div>
-        <div class="flex flex-col sm:flex-row gap-2">
+            class="flex-[2] bg-black/80 border border-green-500/20 rounded px-3 py-2 text-[11px] text-green-300 mono placeholder-green-500/30 focus:border-green-400/60 focus:outline-none transition-colors" />
           <input id="reg-x" type="text" placeholder="${esc(s.reg_x_label)}"
             class="flex-1 bg-black/80 border border-green-500/10 rounded px-3 py-2 text-[11px] text-gray-400 mono placeholder-gray-700 focus:border-green-400/40 focus:outline-none transition-colors" />
           <input id="reg-email" type="email" placeholder="${esc(s.reg_email_label)}"
-            class="flex-1 bg-black/80 border border-green-500/10 rounded px-3 py-2 text-[11px] text-gray-400 mono placeholder-gray-700 focus:border-green-400/40 focus:outline-none transition-colors" />
-          <input id="reg-ref" type="text" placeholder="${esc(s.reg_ref_label)}"
             class="flex-1 bg-black/80 border border-green-500/10 rounded px-3 py-2 text-[11px] text-gray-400 mono placeholder-gray-700 focus:border-green-400/40 focus:outline-none transition-colors" />
         </div>
         <button type="submit" id="reg-btn"
@@ -1010,13 +1005,13 @@ export function renderDashboard(data: {
       btn.textContent = '\u23F3 ...';
       result.className = 'hidden';
 
-      var body = { id: document.getElementById('reg-id').value.trim().toLowerCase(), name: document.getElementById('reg-name').value.trim() };
+      var name = document.getElementById('reg-name').value.trim();
+      var autoId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'bot-' + Date.now();
+      var body = { id: autoId, name: name };
       var x = document.getElementById('reg-x').value.trim();
       var email = document.getElementById('reg-email').value.trim();
-      var ref = document.getElementById('reg-ref').value.trim();
       if (x) body.x_handle = x;
       if (email) body.email = email;
-      if (ref) body.referred_by = ref;
 
       try {
         var res = await fetch('/bots/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
