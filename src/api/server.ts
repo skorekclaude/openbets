@@ -97,6 +97,29 @@ async function notifyWebhook(event: {
   }
 }
 
+// ── Request size limit ───────────────────────────────────────
+const MAX_BODY_SIZE = 512 * 1024; // 512KB max request body
+
+// ── Input length limits ──────────────────────────────────────
+const MAX_LEN = {
+  thesis: 2000,
+  reason: 1000,
+  explanation: 2000,
+  name: 100,
+  id: 50,
+  owner: 100,
+  email: 200,
+  x_handle: 100,
+  message: 500,
+  content: 500,
+} as const;
+
+function validateStringLength(value: string | undefined, field: keyof typeof MAX_LEN): string | null {
+  if (!value) return null;
+  if (value.length > MAX_LEN[field]) return `${field} max ${MAX_LEN[field]} chars`;
+  return null;
+}
+
 // ── Rate limiter (in-memory, sliding window) ────────────────
 const RATE_LIMIT = 30;              // max requests per window
 const RATE_WINDOW_MS = 60 * 1000;   // 1 minute window
@@ -181,10 +204,19 @@ setInterval(async () => {
 
 async function authenticate(req: Request): Promise<{ bot: any } | { error: string; status: number }> {
   const apiKey = req.headers.get("x-api-key") || req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!apiKey) return { error: "Missing X-Api-Key header", status: 401 };
+  const clientIp = (req as any).requestIP?.address || req.headers.get("x-real-ip") || "unknown";
+
+  if (!apiKey) {
+    console.warn(`[AUTH] Missing key from ${clientIp} ${req.method} ${new URL(req.url).pathname}`);
+    return { error: "Missing X-Api-Key header", status: 401 };
+  }
 
   const bot = await getBotByKey(apiKey);
-  if (!bot) return { error: "Invalid API key", status: 401 };
+  if (!bot) {
+    // L2: Log failed auth (prefix only, never log full key)
+    console.warn(`[AUTH] Invalid key ${apiKey.slice(0, 12)}... from ${clientIp}`);
+    return { error: "Invalid API key", status: 401 };
+  }
 
   // Update last seen
   await db.from("bots").update({ last_seen: new Date().toISOString() }).eq("id", bot.id);
@@ -221,6 +253,11 @@ export async function handleRequest(req: Request): Promise<Response> {
   const path = url.pathname;
   const method = req.method;
 
+  // L3: Health check endpoint (no auth, no rate limit)
+  if (path === "/health" && method === "GET") {
+    return json({ ok: true, status: "healthy", timestamp: new Date().toISOString() });
+  }
+
   // CORS preflight
   if (method === "OPTIONS") {
     const preflightHeaders: Record<string, string> = {
@@ -232,10 +269,18 @@ export async function handleRequest(req: Request): Promise<Response> {
     return new Response(null, { status: 204, headers: preflightHeaders });
   }
 
+  // M4: Reject oversized request bodies
+  const contentLength = parseInt(req.headers.get("content-length") || "0");
+  if (contentLength > MAX_BODY_SIZE) {
+    return err("Payload too large (max 512KB)", 413);
+  }
+
   // ── Rate limiting (POST/PUT/DELETE only — GET is exempt) ──
+  // M2: Use connection IP, not spoofable X-Forwarded-For
   if (method !== "GET") {
     const apiKey = req.headers.get("x-api-key") || req.headers.get("authorization")?.replace("Bearer ", "");
-    const rateLimitKey = apiKey || (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()) || "anonymous";
+    const clientIp = (req as any).requestIP?.address || req.headers.get("x-real-ip") || "anonymous";
+    const rateLimitKey = apiKey || clientIp;
     if (!checkRateLimit(rateLimitKey)) {
       return json({ ok: false, error: "Rate limit exceeded. Max 30 write requests per minute." }, 429);
     }
@@ -448,6 +493,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (!id || !name) return err("id and name are required");
     if (!/^[a-z0-9-_]+$/.test(id)) return err("id must be lowercase alphanumeric + hyphens/underscores");
     if (id.length > 50) return err("id max 50 chars");
+    // M1: Validate all string input lengths
+    const lenErr = validateStringLength(name, "name") || validateStringLength(owner, "owner")
+      || validateStringLength(email, "email") || validateStringLength(x_handle, "x_handle");
+    if (lenErr) return err(lenErr);
 
     const result = await registerBot(id, name, owner, email, x_handle);
     if (!result.ok) return err(result.error || "Registration failed");
@@ -1613,10 +1662,11 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     // TODO: Add actual on-chain verification with @solana/web3.js
     const depositArbiterKey = req.headers.get("x-arbiter-key");
     if (!ARBITER_KEY || !depositArbiterKey || !safeCompare(depositArbiterKey, ARBITER_KEY)) {
-      console.warn(`[SECURITY] Deposit BLOCKED (no arbiter key): bot=${bot.id} amount=${amount} tx=${tx_signature}`);
+      console.warn(`[SECURITY] Deposit BLOCKED (no arbiter key): bot=${bot.id}`);
       return err("Premium deposits require arbiter approval (x-arbiter-key header). Contact admin.", 403);
     }
-    console.log(`[Deposit] Arbiter-approved: bot=${bot.id} amount=${amount} tx=${tx_signature}`);
+    // M6: Don't log sensitive financial data (tx signature, exact amount)
+    console.log(`[Deposit] Arbiter-approved: bot=${bot.id}`);
 
     const result = await processPremiumDeposit(bot.id, Number(amount), tx_signature);
     if (!result.ok) return err(result.error || "Deposit failed");
@@ -1668,6 +1718,9 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!["for", "against"].includes(side)) return err("side must be 'for' or 'against'");
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return err("amount must be a positive number (PAI)");
     if (!reason) return err("reason is required");
+    // M1: Validate string lengths
+    const lenErr = validateStringLength(thesis, "thesis") || validateStringLength(reason, "reason");
+    if (lenErr) return err(lenErr);
 
     const validCategories = ["tech", "business", "market", "science", "crypto", "geopolitics", "ai", "pai-internal"];
     if (!validCategories.includes(category)) {
@@ -1702,6 +1755,8 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!["for", "against"].includes(side)) return err("side must be 'for' or 'against'");
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) return err("amount must be a positive number (PAI)");
     if (!reason) return err("reason is required");
+    const lenErr = validateStringLength(reason, "reason");
+    if (lenErr) return err(lenErr);
 
     const result = await joinBet(bot.id, joinMatch[1], side, Number(amount), reason);
     if (!result.ok) return err(result.error || "Failed to join bet");
@@ -1732,6 +1787,8 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     const { outcome, explanation } = body;
     if (!["for", "against"].includes(outcome)) return err("outcome must be 'for' or 'against'");
     if (!explanation) return err("explanation is required");
+    const lenErr = validateStringLength(explanation, "explanation");
+    if (lenErr) return err(lenErr);
 
     const result = await resolveBet(resolveMatch[1], outcome, bot.id, explanation);
     if (!result.ok) return err(result.error || "Failed to resolve bet");
@@ -1827,7 +1884,11 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
       content: content.trim(),
     }).select().single();
 
-    if (chatErr) return err(chatErr.message || "Failed to send message");
+    if (chatErr) {
+      // M3: Don't leak DB error details to client
+      console.error("[DB] messages.insert failed:", chatErr.message);
+      return err("Failed to send message");
+    }
 
     return json({
       ok: true,
