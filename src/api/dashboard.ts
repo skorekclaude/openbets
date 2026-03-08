@@ -820,29 +820,69 @@ export function renderDashboard(data: {
               </div>
             </div>
           </div>
-          <!-- Verify Form -->
+          <!-- Verify Form (2-step) -->
           <div class="mt-3 pt-3 border-t border-green-500/10">
             <div class="text-[9px] text-green-400/60 mono uppercase tracking-wider mb-2">\u2705 ${esc(s.tier_verify_how)}</div>
-            <form id="verify-form" class="space-y-1.5" onsubmit="return handleVerify(event)"
-              data-success="${esc(s.verify_success)}" data-error="${esc(s.verify_error)}"
-              data-copy="${esc(s.reg_copy)}" data-copied="${esc(s.reg_copied)}"
-              data-lang="${lang}">
-              <input id="verify-key" type="text" required placeholder="${esc(s.verify_key_label)}"
-                class="w-full bg-black/80 border border-blue-500/15 rounded px-2.5 py-1.5 text-[10px] text-blue-300 mono placeholder-blue-500/25 focus:border-blue-400/50 focus:outline-none transition-colors" />
-              <div class="flex gap-1.5">
-                <select id="verify-method"
-                  class="bg-black/80 border border-blue-500/15 rounded px-2 py-1.5 text-[10px] text-blue-300 mono focus:border-blue-400/50 focus:outline-none cursor-pointer">
-                  <option value="x">X.com</option>
-                  <option value="email">Email</option>
-                </select>
-                <input id="verify-handle" type="text" required placeholder="${esc(s.verify_handle_label)}"
-                  class="flex-1 bg-black/80 border border-blue-500/15 rounded px-2.5 py-1.5 text-[10px] text-blue-300 mono placeholder-blue-500/25 focus:border-blue-400/50 focus:outline-none transition-colors" />
+
+            <!-- Step 1: Request verification code -->
+            <div id="verify-step1">
+              <form id="verify-start-form" class="space-y-1.5" onsubmit="return handleVerifyStart(event)"
+                data-success="${esc(s.verify_success)}" data-error="${esc(s.verify_error)}"
+                data-lang="${lang}">
+                <input id="verify-key" type="text" required placeholder="${esc(s.verify_key_label)}"
+                  class="w-full bg-black/80 border border-blue-500/15 rounded px-2.5 py-1.5 text-[10px] text-blue-300 mono placeholder-blue-500/25 focus:border-blue-400/50 focus:outline-none transition-colors" />
+                <div class="flex gap-1.5">
+                  <select id="verify-method"
+                    class="bg-black/80 border border-blue-500/15 rounded px-2 py-1.5 text-[10px] text-blue-300 mono focus:border-blue-400/50 focus:outline-none cursor-pointer">
+                    <option value="x">X.com</option>
+                    <option value="email">Email</option>
+                  </select>
+                  <input id="verify-handle" type="text" required placeholder="${esc(s.verify_handle_label)}"
+                    class="flex-1 bg-black/80 border border-blue-500/15 rounded px-2.5 py-1.5 text-[10px] text-blue-300 mono placeholder-blue-500/25 focus:border-blue-400/50 focus:outline-none transition-colors" />
+                </div>
+                <button type="submit" id="verify-start-btn"
+                  class="w-full bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-[10px] mono px-3 py-1.5 rounded transition-all cursor-pointer">
+                  \u{1F4E8} ${esc(s.verify_start_btn)}
+                </button>
+              </form>
+            </div>
+
+            <!-- Step 2: Complete verification (hidden until step 1 succeeds) -->
+            <div id="verify-step2" class="hidden space-y-1.5 mt-2">
+              <!-- Instructions area (filled dynamically) -->
+              <div id="verify-instructions" class="p-2 rounded border border-blue-500/20 bg-blue-500/5 text-[10px] mono text-blue-300"></div>
+
+              <!-- Tweet template (shown for X.com method) -->
+              <div id="verify-tweet-area" class="hidden">
+                <div class="text-[9px] text-green-400/60 mono mb-1">${esc(s.verify_tweet_instructions)}</div>
+                <div id="verify-tweet-text" class="p-2 bg-black/60 border border-green-500/20 rounded text-[10px] mono text-green-300 select-all cursor-text"></div>
+                <div class="flex gap-1.5 mt-1.5">
+                  <button onclick="copyTweetText()" id="copy-tweet-btn"
+                    class="flex-1 bg-black/40 hover:bg-blue-500/15 border border-blue-500/20 text-blue-300 text-[9px] mono px-2 py-1 rounded transition-all cursor-pointer">
+                    \u{1F4CB} ${esc(s.verify_copy_tweet)}
+                  </button>
+                  <button onclick="handleVerifyComplete()" id="verify-tweet-btn"
+                    class="flex-1 bg-green-500/15 hover:bg-green-500/25 border border-green-500/30 text-green-300 text-[9px] mono px-2 py-1 rounded transition-all cursor-pointer">
+                    \u2705 ${esc(s.verify_tweeted)}
+                  </button>
+                </div>
               </div>
-              <button type="submit" id="verify-btn"
-                class="w-full bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-[10px] mono px-3 py-1.5 rounded transition-all cursor-pointer">
-                \u2705 ${esc(s.verify_btn)}
-              </button>
-            </form>
+
+              <!-- Email code input (shown for email method) -->
+              <div id="verify-email-area" class="hidden">
+                <div class="flex gap-1.5">
+                  <input id="verify-code-input" type="text" required placeholder="${esc(s.verify_code_label)}"
+                    class="flex-1 bg-black/80 border border-blue-500/15 rounded px-2.5 py-1.5 text-[10px] text-blue-300 mono placeholder-blue-500/25 focus:border-blue-400/50 focus:outline-none tracking-widest uppercase" />
+                  <button onclick="handleVerifyComplete()" id="verify-email-btn"
+                    class="bg-green-500/15 hover:bg-green-500/25 border border-green-500/30 text-green-300 text-[10px] mono px-3 py-1.5 rounded transition-all cursor-pointer">
+                    \u2705 ${esc(s.verify_complete_btn)}
+                  </button>
+                </div>
+              </div>
+
+              <div class="text-[8px] text-gray-600 mono">\u23F3 ${esc(s.verify_expires)}</div>
+            </div>
+
             <div id="verify-result" class="hidden mt-1.5 p-2 rounded border text-[10px] mono"></div>
             <div class="text-[8px] text-gray-700 mono mt-1.5">${esc(s.tier_verify_methods)}</div>
           </div>
@@ -1051,35 +1091,52 @@ export function renderDashboard(data: {
       });
     }
 
-    // ── Verification form handler ──────────────────────────
-    async function handleVerify(e) {
+    // ── Verification form handler (2-step) ───────────────
+    var _verifyApiKey = '';
+    var _verifyMethod = '';
+    var _verifyCode = '';
+
+    async function handleVerifyStart(e) {
       e.preventDefault();
-      var form = document.getElementById('verify-form');
-      var btn = document.getElementById('verify-btn');
+      var btn = document.getElementById('verify-start-btn');
       var result = document.getElementById('verify-result');
       var origText = btn.textContent;
       btn.disabled = true;
       btn.textContent = '\u23F3 ...';
       result.className = 'hidden';
 
-      var apiKey = document.getElementById('verify-key').value.trim();
-      var method = document.getElementById('verify-method').value;
+      _verifyApiKey = document.getElementById('verify-key').value.trim();
+      _verifyMethod = document.getElementById('verify-method').value;
       var handle = document.getElementById('verify-handle').value.trim();
 
       try {
-        var res = await fetch('/bots/verify', {
+        var res = await fetch('/bots/verify/start', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
-          body: JSON.stringify({ method: method, handle: handle })
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': _verifyApiKey },
+          body: JSON.stringify({ method: _verifyMethod, handle: handle })
         });
         var data = await res.json();
         if (data.ok) {
-          result.className = 'mt-1.5 p-2 rounded border border-green-500/30 bg-green-500/5 text-[10px] mono';
-          result.innerHTML = '<span class="text-green-400">\u2705 ' + (form.dataset.success || 'Verified!') + '</span>';
-          form.reset();
+          // Hide step 1, show step 2
+          document.getElementById('verify-step1').classList.add('hidden');
+          document.getElementById('verify-step2').classList.remove('hidden');
+          document.getElementById('verify-instructions').textContent = data.instructions || '';
+
+          if (_verifyMethod === 'x') {
+            // Show tweet area with code
+            _verifyCode = data.code || '';
+            document.getElementById('verify-tweet-area').classList.remove('hidden');
+            document.getElementById('verify-email-area').classList.add('hidden');
+            var tweetText = 'Verifying my OpenBets bot: ' + _verifyCode + ' #OpenBets @openbets_ai';
+            document.getElementById('verify-tweet-text').textContent = tweetText;
+          } else {
+            // Show email code input
+            document.getElementById('verify-tweet-area').classList.add('hidden');
+            document.getElementById('verify-email-area').classList.remove('hidden');
+          }
         } else {
           result.className = 'mt-1.5 p-2 rounded border border-red-500/30 bg-red-500/5 text-[10px] mono';
-          result.innerHTML = '<span class="text-red-400">\u274C ' + (data.error || form.dataset.error || 'Verification failed') + '</span>';
+          result.innerHTML = '<span class="text-red-400">\u274C ' + (data.error || 'Verification start failed') + '</span>';
         }
       } catch(err) {
         result.className = 'mt-1.5 p-2 rounded border border-red-500/30 bg-red-500/5 text-[10px] mono';
@@ -1088,6 +1145,62 @@ export function renderDashboard(data: {
       btn.disabled = false;
       btn.textContent = origText;
       return false;
+    }
+
+    function copyTweetText() {
+      var text = document.getElementById('verify-tweet-text').textContent;
+      var btn = document.getElementById('copy-tweet-btn');
+      navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = '\u2705 Copied!';
+        btn.classList.add('border-green-500/40', 'text-green-300');
+        setTimeout(function() { btn.textContent = '\u{1F4CB} Copy tweet'; btn.classList.remove('border-green-500/40', 'text-green-300'); }, 2000);
+      });
+    }
+
+    async function handleVerifyComplete() {
+      var result = document.getElementById('verify-result');
+      result.className = 'hidden';
+
+      // Get code: for X it's the stored code, for email it's from the input
+      var code = _verifyMethod === 'x' ? _verifyCode : (document.getElementById('verify-code-input')?.value || '').trim();
+      if (!code) {
+        result.className = 'mt-1.5 p-2 rounded border border-red-500/30 bg-red-500/5 text-[10px] mono';
+        result.innerHTML = '<span class="text-red-400">\u274C Enter the verification code</span>';
+        return;
+      }
+
+      // Disable buttons during request
+      var tweetBtn = document.getElementById('verify-tweet-btn');
+      var emailBtn = document.getElementById('verify-email-btn');
+      if (tweetBtn) { tweetBtn.disabled = true; tweetBtn.textContent = '\u23F3 ...'; }
+      if (emailBtn) { emailBtn.disabled = true; emailBtn.textContent = '\u23F3 ...'; }
+
+      try {
+        var res = await fetch('/bots/verify/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': _verifyApiKey },
+          body: JSON.stringify({ code: code })
+        });
+        var data = await res.json();
+        if (data.ok) {
+          result.className = 'mt-1.5 p-2 rounded border border-green-500/30 bg-green-500/5 text-[10px] mono';
+          result.innerHTML = '<span class="text-green-400">\u2705 ' + (data.message || 'Verified! +1,000,000 credits added.') + '</span>';
+          // Reset form back to step 1
+          document.getElementById('verify-step1').classList.remove('hidden');
+          document.getElementById('verify-step2').classList.add('hidden');
+          document.getElementById('verify-start-form').reset();
+        } else {
+          result.className = 'mt-1.5 p-2 rounded border border-red-500/30 bg-red-500/5 text-[10px] mono';
+          result.innerHTML = '<span class="text-red-400">\u274C ' + (data.error || 'Verification failed') + '</span>';
+        }
+      } catch(err) {
+        result.className = 'mt-1.5 p-2 rounded border border-red-500/30 bg-red-500/5 text-[10px] mono';
+        result.innerHTML = '<span class="text-red-400">\u274C ' + err.message + '</span>';
+      }
+
+      // Re-enable buttons
+      if (tweetBtn) { tweetBtn.disabled = false; tweetBtn.textContent = '\u2705 I\\'ve tweeted it!'; }
+      if (emailBtn) { emailBtn.disabled = false; emailBtn.textContent = '\u2705 Complete'; }
     }
 
     // Time ago formatter

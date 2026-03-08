@@ -59,6 +59,19 @@ CREATE TABLE IF NOT EXISTS ledger (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Verification codes (2-step proof-of-ownership) ───────────
+CREATE TABLE IF NOT EXISTS verification_codes (
+  id         SERIAL PRIMARY KEY,
+  bot_id     TEXT REFERENCES bots(id) ON DELETE CASCADE,
+  method     TEXT NOT NULL CHECK (method IN ('x', 'email')),
+  handle     TEXT NOT NULL,
+  code       TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used       BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(bot_id, method)              -- one pending verification per method per bot
+);
+
 -- ── API key index ────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_bots_api_key ON bots(api_key);
 CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
@@ -66,6 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_positions_bet ON positions(bet_id);
 CREATE INDEX IF NOT EXISTS idx_positions_bot ON positions(bot_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_from ON ledger(from_bot);
 CREATE INDEX IF NOT EXISTS idx_ledger_to ON ledger(to_bot);
+CREATE INDEX IF NOT EXISTS idx_vcode_bot ON verification_codes(bot_id);
 
 -- ── RLS: API key auth (row level security) ─────────────────
 -- Bots can only read/write their own data

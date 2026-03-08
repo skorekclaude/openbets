@@ -19,6 +19,8 @@ import {
   getLeaderboard,
   getBotStats,
   verifyBot,
+  startVerification,
+  completeVerification,
   processPremiumDeposit,
   proposeResolution,
   disputeResolution,
@@ -1619,8 +1621,13 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
   if ("error" in auth) return err(auth.error, auth.status);
   const { bot } = auth;
 
-  // POST /bots/verify — verify bot (X.com or email)
+  // POST /bots/verify — DEPRECATED (old single-step)
   if (path === "/bots/verify" && method === "POST") {
+    return err("Deprecated: use POST /bots/verify/start then POST /bots/verify/complete for real verification.", 410);
+  }
+
+  // POST /bots/verify/start — Step 1: generate code, send instructions
+  if (path === "/bots/verify/start" && method === "POST") {
     let body: any;
     try { body = await req.json(); } catch { return err("Invalid JSON"); }
 
@@ -1628,14 +1635,38 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
     if (!["x", "email"].includes(verifyMethod)) return err("method must be 'x' or 'email'");
     if (!handle) return err("handle is required (X username or email address)");
 
-    const result = await verifyBot(bot.id, verifyMethod, handle);
+    const lenErr = validateStringLength(handle, verifyMethod === "x" ? "x_handle" : "email");
+    if (lenErr) return err(lenErr);
+
+    const result = await startVerification(bot.id, verifyMethod, handle);
+    if (!result.ok) return err(result.error || "Verification start failed");
+
+    return json({
+      ok: true,
+      method: verifyMethod,
+      code: result.code,              // present for X.com, absent for email
+      instructions: result.instructions,
+      expires_in_minutes: result.expires_in_minutes,
+    });
+  }
+
+  // POST /bots/verify/complete — Step 2: verify code
+  if (path === "/bots/verify/complete" && method === "POST") {
+    let body: any;
+    try { body = await req.json(); } catch { return err("Invalid JSON"); }
+
+    const { code } = body;
+    if (!code) return err("code is required");
+    if (typeof code !== "string" || code.length > 20) return err("Invalid code format");
+
+    const result = await completeVerification(bot.id, code);
     if (!result.ok) return err(result.error || "Verification failed");
 
     return json({
       ok: true,
-      tier: "verified",
+      tier: result.tier,
       new_balance_pai: result.newBalance,
-      message: `Verified via ${verifyMethod}! +1,000,000 credits bonus added. You now have higher limits. Want real stakes? Buy PAI Coin on Raydium and deposit.`,
+      message: `Verified! +1,000,000 credits bonus added. You now have higher limits. Want real stakes? Buy PAI Coin on Raydium and deposit.`,
     });
   }
 

@@ -3,8 +3,10 @@
  * Core prediction market logic: create bets, join, resolve, payouts.
  */
 
+import { randomBytes } from "node:crypto";
 import { db, PAI, fromPAI, type Bet, type Position } from "../db/client.ts";
 import { generateApiKey, generateBetId, hashApiKey } from "./utils.ts";
+import { checkTweetForCode, sendVerificationEmail } from "./twitter.ts";
 
 const MIN_BET = PAI(100);          // 100 PAI minimum (starter can make 2 bets)
 const MAX_BET = PAI(1_000_000);    // 1M PAI
@@ -89,39 +91,143 @@ export async function registerBot(
   return { ok: true, apiKey };
 }
 
-// ── Verify bot (X.com or email) ─────────────────────────────
+// ── Verify bot (2-step: start → complete) ───────────────────
+// Step 1: Generate code, store pending, send instructions
+// Step 2: Verify code (tweet check or email code match)
 
-export async function verifyBot(
+const VERIFY_CODE_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
+
+function generateVerifyCode(): string {
+  // PAI-XXXX format (e.g. PAI-A7K9)
+  return "PAI-" + randomBytes(3).toString("hex").toUpperCase().slice(0, 4);
+}
+
+export async function startVerification(
   botId: string,
   method: "x" | "email",
   handle: string,
-): Promise<{ ok: boolean; newBalance?: number; error?: string }> {
-  const { data: bot } = await db.from("bots").select("*").eq("id", botId).single();
+): Promise<{ ok: boolean; code?: string; instructions?: string; expires_in_minutes?: number; error?: string }> {
+  const { data: bot } = await db.from("bots").select("id, verified").eq("id", botId).single();
   if (!bot) return { ok: false, error: "Bot not found" };
   if (bot.verified) return { ok: false, error: "Already verified" };
 
-  // Atomic: check uniqueness + set verified + increment balance in one SQL call
-  // Uniqueness check is INSIDE the DB function (same transaction = no TOCTOU race)
+  // Check handle not already claimed by another bot
+  if (method === "x") {
+    const { data: existing } = await db.from("bots").select("id").eq("x_handle", handle).neq("id", botId).single();
+    if (existing) return { ok: false, error: "That X handle is already claimed by another bot" };
+  } else {
+    const { data: existing } = await db.from("bots").select("id").eq("email", handle).neq("id", botId).single();
+    if (existing) return { ok: false, error: "That email is already claimed by another bot" };
+  }
+
+  const code = generateVerifyCode();
+  const expiresAt = new Date(Date.now() + VERIFY_CODE_EXPIRY_MS);
+
+  // Upsert: replace any existing pending verification for this bot+method
+  await db.from("verification_codes").upsert(
+    {
+      bot_id: botId,
+      method,
+      handle,
+      code,
+      expires_at: expiresAt.toISOString(),
+      used: false,
+    },
+    { onConflict: "bot_id,method" },
+  );
+
+  // For email: send the code
+  if (method === "email") {
+    const emailResult = await sendVerificationEmail(handle, code);
+    if (!emailResult.sent) {
+      return { ok: false, error: emailResult.error || "Failed to send verification email" };
+    }
+    return {
+      ok: true,
+      instructions: `Verification code sent to ${handle}. Check your inbox and submit the code to complete verification.`,
+      expires_in_minutes: 15,
+    };
+  }
+
+  // For X.com: return code with tweet instructions
+  const cleanHandle = handle.replace(/^@/, "");
+  const tweetText = `Verifying my OpenBets bot: ${code} #OpenBets @openbets_ai`;
+  return {
+    ok: true,
+    code,
+    instructions: `Tweet exactly: "${tweetText}" from @${cleanHandle}, then click "Complete verification".`,
+    expires_in_minutes: 15,
+  };
+}
+
+export async function completeVerification(
+  botId: string,
+  code: string,
+): Promise<{ ok: boolean; newBalance?: number; tier?: string; error?: string }> {
+  // Look up pending verification
+  const { data: pending } = await db
+    .from("verification_codes")
+    .select("*")
+    .eq("bot_id", botId)
+    .eq("used", false)
+    .gt("expires_at", new Date().toISOString())
+    .single();
+
+  if (!pending) {
+    return { ok: false, error: "No pending verification found, or code has expired. Start a new verification." };
+  }
+
+  // For email: just compare the code
+  if (pending.method === "email") {
+    if (pending.code !== code) {
+      return { ok: false, error: "Invalid verification code." };
+    }
+  }
+
+  // For X.com: check if the tweet exists
+  if (pending.method === "x") {
+    const tweetResult = await checkTweetForCode(pending.handle, pending.code);
+    if (!tweetResult.found) {
+      return {
+        ok: false,
+        error: tweetResult.error || `Tweet with code "${pending.code}" not found from @${pending.handle.replace(/^@/, "")}. Make sure the tweet is public and try again.`,
+      };
+    }
+  }
+
+  // Mark code as used
+  await db.from("verification_codes").update({ used: true }).eq("id", pending.id);
+
+  // Atomic: check uniqueness + set verified + increment balance
   const { data: newBalance } = await db.rpc("verify_bot_atomic", {
     p_bot_id: botId,
     p_bonus: VERIFY_BONUS,
-    p_method: method,
-    p_handle: handle,
+    p_method: pending.method,
+    p_handle: pending.handle,
   });
 
   // -1 signals handle already claimed (atomic check inside DB function)
   if (newBalance === -1) {
-    return { ok: false, error: `That ${method === "x" ? "X handle" : "email"} is already claimed by another bot` };
+    return { ok: false, error: `That ${pending.method === "x" ? "X handle" : "email"} is already claimed by another bot` };
   }
 
   await db.from("ledger").insert({
     from_bot: "system",
     to_bot: botId,
     amount: VERIFY_BONUS,
-    reason: `Verification bonus (${method}: ${handle})`,
+    reason: `Verification bonus (${pending.method}: ${pending.handle})`,
   });
 
-  return { ok: true, newBalance: fromPAI(newBalance) };
+  return { ok: true, newBalance: fromPAI(newBalance), tier: "verified" };
+}
+
+// Legacy wrapper — kept for backward compat, deprecated
+export async function verifyBot(
+  botId: string,
+  method: "x" | "email",
+  handle: string,
+): Promise<{ ok: boolean; newBalance?: number; error?: string }> {
+  return { ok: false, error: "Deprecated: use /bots/verify/start and /bots/verify/complete instead." };
 }
 
 // ── Premium deposit ─────────────────────────────────────────

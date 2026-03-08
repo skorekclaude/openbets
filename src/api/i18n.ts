@@ -138,12 +138,22 @@ export interface Strings {
   reg_copy: string;
   reg_copied: string;
 
-  // Verify form
+  // Verify form (2-step)
   verify_key_label: string;
   verify_handle_label: string;
   verify_btn: string;
   verify_success: string;
   verify_error: string;
+  verify_start_btn: string;
+  verify_code_label: string;
+  verify_complete_btn: string;
+  verify_tweet_instructions: string;
+  verify_email_sent: string;
+  verify_code_expired: string;
+  verify_tweet_not_found: string;
+  verify_copy_tweet: string;
+  verify_tweeted: string;
+  verify_expires: string;
 
   // Sidebar
   sidebar_activity: string;
@@ -333,6 +343,16 @@ const en: Strings = {
   verify_btn: "Verify & Get +1M Credits",
   verify_success: "Verified! +1,000,000 credits added.",
   verify_error: "Verification failed",
+  verify_start_btn: "Send verification code",
+  verify_code_label: "Verification code",
+  verify_complete_btn: "Complete verification",
+  verify_tweet_instructions: "Tweet this from your account:",
+  verify_email_sent: "Code sent to your email. Check inbox.",
+  verify_code_expired: "Code expired. Request a new one.",
+  verify_tweet_not_found: "Tweet not found. Make sure it's public.",
+  verify_copy_tweet: "Copy tweet",
+  verify_tweeted: "I've tweeted it \u2014 verify now!",
+  verify_expires: "Expires in 15 minutes",
 
   sidebar_activity: "Live Activity",
   sidebar_autorefresh: "auto-refreshes 30s",
@@ -512,6 +532,16 @@ const pl: Strings = {
   verify_btn: "Zweryfikuj i dostaj +1M",
   verify_success: "Zweryfikowany! +1 000 000 kredyt\u00F3w dodano.",
   verify_error: "Weryfikacja nie powiod\u0142a si\u0119",
+  verify_start_btn: "Wy\u015Blij kod weryfikacyjny",
+  verify_code_label: "Kod weryfikacyjny",
+  verify_complete_btn: "Zako\u0144cz weryfikacj\u0119",
+  verify_tweet_instructions: "Wrzu\u0107 ten tweet ze swojego konta:",
+  verify_email_sent: "Kod wys\u0142any na email. Sprawd\u017A skrzynk\u0119.",
+  verify_code_expired: "Kod wygas\u0142. Popro\u015B o nowy.",
+  verify_tweet_not_found: "Tweet nie znaleziony. Upewnij si\u0119, \u017Ce jest publiczny.",
+  verify_copy_tweet: "Kopiuj tweet",
+  verify_tweeted: "Wrzu\u0107lem tweet \u2014 zweryfikuj!",
+  verify_expires: "Wygasa za 15 minut",
 
   sidebar_activity: "Aktywno\u015B\u0107 na \u017Cywo",
   sidebar_autorefresh: "od\u015Bwie\u017Ca si\u0119 co 30s",
@@ -691,6 +721,16 @@ const pt: Strings = {
   verify_btn: "Verificar e Receber +1M",
   verify_success: "Verificado! +1.000.000 cr\u00E9ditos adicionados.",
   verify_error: "Verifica\u00E7\u00E3o falhou",
+  verify_start_btn: "Enviar c\u00F3digo de verifica\u00E7\u00E3o",
+  verify_code_label: "C\u00F3digo de verifica\u00E7\u00E3o",
+  verify_complete_btn: "Concluir verifica\u00E7\u00E3o",
+  verify_tweet_instructions: "Publique este tweet da sua conta:",
+  verify_email_sent: "C\u00F3digo enviado para seu email. Verifique a caixa.",
+  verify_code_expired: "C\u00F3digo expirado. Solicite um novo.",
+  verify_tweet_not_found: "Tweet n\u00E3o encontrado. Certifique-se de que \u00E9 p\u00FAblico.",
+  verify_copy_tweet: "Copiar tweet",
+  verify_tweeted: "Publiquei o tweet \u2014 verificar agora!",
+  verify_expires: "Expira em 15 minutos",
 
   sidebar_activity: "Atividade ao Vivo",
   sidebar_autorefresh: "atualiza a cada 30s",
