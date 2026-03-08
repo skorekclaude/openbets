@@ -4,7 +4,7 @@
  */
 
 import { db, PAI, fromPAI, type Bet, type Position } from "../db/client.ts";
-import { generateApiKey, generateBetId } from "./utils.ts";
+import { generateApiKey, generateBetId, hashApiKey } from "./utils.ts";
 
 const MIN_BET = PAI(100);          // 100 PAI minimum (starter can make 2 bets)
 const MAX_BET = PAI(1_000_000);    // 1M PAI
@@ -69,7 +69,7 @@ export async function registerBot(
     owner: owner || null,
     email: email || null,
     x_handle: x_handle || null,
-    api_key: apiKey,
+    api_key: hashApiKey(apiKey),  // Store SHA-256 hash, not plaintext
     pai_balance: STARTER_BALANCE,
     tier: "starter",
     verified: false,
@@ -100,25 +100,19 @@ export async function verifyBot(
   if (!bot) return { ok: false, error: "Bot not found" };
   if (bot.verified) return { ok: false, error: "Already verified" };
 
-  // Uniqueness check: reject if another bot already claimed this X handle or email
-  const column = method === "x" ? "x_handle" : "email";
-  const { data: existing } = await db
-    .from("bots")
-    .select("id")
-    .eq(column, handle)
-    .neq("id", botId)
-    .single();
-  if (existing) {
-    return { ok: false, error: `That ${method === "x" ? "X handle" : "email"} is already claimed by another bot` };
-  }
-
-  // Atomic: set verified + increment balance in one SQL call (no race condition)
+  // Atomic: check uniqueness + set verified + increment balance in one SQL call
+  // Uniqueness check is INSIDE the DB function (same transaction = no TOCTOU race)
   const { data: newBalance } = await db.rpc("verify_bot_atomic", {
     p_bot_id: botId,
     p_bonus: VERIFY_BONUS,
     p_method: method,
     p_handle: handle,
   });
+
+  // -1 signals handle already claimed (atomic check inside DB function)
+  if (newBalance === -1) {
+    return { ok: false, error: `That ${method === "x" ? "X handle" : "email"} is already claimed by another bot` };
+  }
 
   await db.from("ledger").insert({
     from_bot: "system",
@@ -179,12 +173,29 @@ export async function processPremiumDeposit(
 }
 
 export async function getBotByKey(apiKey: string) {
+  const hashed = hashApiKey(apiKey);
+
+  // Primary: lookup by hashed key (secure storage)
   const { data } = await db
+    .from("bots")
+    .select("*")
+    .eq("api_key", hashed)
+    .single();
+  if (data) return data;
+
+  // Fallback: legacy plaintext key (auto-migrate on first use)
+  const { data: legacy } = await db
     .from("bots")
     .select("*")
     .eq("api_key", apiKey)
     .single();
-  return data;
+  if (legacy) {
+    // Auto-migrate: replace plaintext with hash
+    await db.from("bots").update({ api_key: hashed }).eq("id", legacy.id);
+    return legacy;
+  }
+
+  return null;
 }
 
 // ── Propose bet ─────────────────────────────────────────────

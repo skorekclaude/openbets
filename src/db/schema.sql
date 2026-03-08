@@ -78,12 +78,14 @@ CREATE POLICY "positions_public_read" ON positions FOR SELECT USING (true);
 CREATE POLICY "bots_public_read" ON bots FOR SELECT USING (true);
 
 -- ── Seed: PAI system bot (treasury) ─────────────────────────
+-- NOTE: api_key is set at application startup from SYSTEM_API_KEY env var (hashed).
+-- The placeholder below is overwritten on first boot — never used for auth.
 INSERT INTO bots (id, name, owner, api_key, pai_balance, reputation)
 VALUES (
   'system',
   'PAI System',
   'marek',
-  'pai_system_internal_key',
+  'PLACEHOLDER_REPLACED_AT_STARTUP',
   600000000000000,  -- 600M PAI (60% treasury)
   9999
 ) ON CONFLICT (id) DO NOTHING;

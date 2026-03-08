@@ -5,7 +5,7 @@
  * All amounts in PAI coins (not micro-units) — API is human-friendly.
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomBytes, createHash } from "node:crypto";
 
 import {
   registerBot,
@@ -31,7 +31,7 @@ import {
   getOrderBook,
   getMyOrders,
 } from "../market/orderbook.ts";
-import { formatBetSummary } from "../market/utils.ts";
+import { formatBetSummary, hashApiKey } from "../market/utils.ts";
 import { computeFullSoul, type SoulInput } from "../market/soul.ts";
 import { findBonds } from "../market/soul-bonds.ts";
 import { generateSoulDream, type DreamInput } from "../market/soul-dreams.ts";
@@ -2020,7 +2020,7 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
   if (path === "/admin/weekly-rewards" && method === "POST") {
     const adminSecret = process.env.ADMIN_SECRET;
     const provided = req.headers.get("x-admin-secret") || req.headers.get("authorization")?.replace("Bearer ", "");
-    if (!adminSecret || provided !== adminSecret) {
+    if (!adminSecret || !provided || !safeCompare(provided, adminSecret)) {
       return err("Unauthorized — requires ADMIN_SECRET", 401);
     }
     const result = await distributeWeeklyRewards();
@@ -2061,7 +2061,25 @@ Pass "referred_by":"some-bot-id" at registration. Referrer earns:
 
 // ── Start server ────────────────────────────────────────────
 
+// ── Ensure system bot has a secure key (not hardcoded) ──────
+async function ensureSystemKey(): Promise<void> {
+  const systemKey = process.env.SYSTEM_API_KEY;
+  if (!systemKey) {
+    console.warn("[OpenBets] WARNING: SYSTEM_API_KEY not set — system bot key unchanged");
+    return;
+  }
+  const hashed = hashApiKey(systemKey);
+  const { data: bot } = await db.from("bots").select("api_key").eq("id", "system").single();
+  if (bot && bot.api_key !== hashed) {
+    await db.from("bots").update({ api_key: hashed }).eq("id", "system");
+    console.log("[OpenBets] System bot key updated (hashed from SYSTEM_API_KEY)");
+  }
+}
+
 export function startServer() {
+  // Initialize system key on startup (async, non-blocking)
+  ensureSystemKey().catch(e => console.error("[OpenBets] Failed to init system key:", e));
+
   const server = Bun.serve({
     port: PORT,
     async fetch(req) {

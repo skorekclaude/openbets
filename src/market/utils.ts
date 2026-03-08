@@ -7,6 +7,14 @@ export function generateApiKey(botId: string): string {
   return `pai_bot_${hash}`;
 }
 
+/**
+ * Hash an API key for secure storage (SHA-256).
+ * Raw keys are returned to the user once; only hashes are stored in DB.
+ */
+export function hashApiKey(rawKey: string): string {
+  return createHash("sha256").update(rawKey).digest("hex");
+}
+
 export async function generateBetId(db: SupabaseClient): Promise<string> {
   const { count } = await db.from("bets").select("*", { count: "exact", head: true });
   const n = ((count || 0) + 1).toString().padStart(6, "0");

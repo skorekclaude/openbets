@@ -22,7 +22,8 @@ RETURNS void AS $$
   WHERE id = p_bet_id;
 $$ LANGUAGE sql;
 
--- ── Atomic verify bot: set verified + increment balance ──────
+-- ── Atomic verify bot: check uniqueness + set verified + increment balance ──
+-- Returns new balance on success, -1 if handle already claimed (race-safe)
 CREATE OR REPLACE FUNCTION verify_bot_atomic(
   p_bot_id TEXT,
   p_bonus BIGINT,
@@ -32,7 +33,21 @@ CREATE OR REPLACE FUNCTION verify_bot_atomic(
 RETURNS BIGINT AS $$
 DECLARE
   new_balance BIGINT;
+  conflict_count INTEGER;
 BEGIN
+  -- Atomic uniqueness check (inside same transaction = no TOCTOU race)
+  IF p_method = 'x' THEN
+    SELECT COUNT(*) INTO conflict_count FROM bots
+    WHERE x_handle = p_handle AND id != p_bot_id;
+  ELSE
+    SELECT COUNT(*) INTO conflict_count FROM bots
+    WHERE email = p_handle AND id != p_bot_id;
+  END IF;
+
+  IF conflict_count > 0 THEN
+    RETURN -1;  -- Signal: handle already claimed
+  END IF;
+
   UPDATE bots
   SET verified = true,
       tier = CASE WHEN tier = 'premium' THEN 'premium' ELSE 'verified' END,
