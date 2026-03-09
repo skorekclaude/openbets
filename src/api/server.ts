@@ -61,6 +61,36 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "https://openbets.bot";
 // Public GET endpoints (dashboard data, leaderboard, etc.) allow any origin.
 // Authenticated POST endpoints restrict to CORS_ORIGIN only.
 
+// ── Twitter/X OAuth 2.0 PKCE ─────────────────────────────────
+const X_CLIENT_ID = process.env.X_OAUTH_CLIENT_ID || "";
+const X_CLIENT_SECRET = process.env.X_OAUTH_CLIENT_SECRET || "";
+const X_REDIRECT_URI = process.env.X_OAUTH_REDIRECT_URI || `https://paibets-production.up.railway.app/auth/x/callback`;
+const SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString("hex");
+
+// In-memory stores (cleared on restart — fine for MVP)
+const oauthStates = new Map<string, { codeVerifier: string; createdAt: number }>();
+const sessions = new Map<string, { xId: string; xHandle: string; xName: string; avatar: string; createdAt: number }>();
+
+// Cleanup stale states every 10 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of oauthStates) if (now - v.createdAt > 600_000) oauthStates.delete(k);
+  for (const [k, v] of sessions) if (now - v.createdAt > 86_400_000 * 7) sessions.delete(k); // 7 day TTL
+}, 600_000);
+
+function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = randomBytes(32).toString("base64url");
+  const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+  return { codeVerifier, codeChallenge };
+}
+
+function getSessionFromCookie(req: Request): { xId: string; xHandle: string; xName: string; avatar: string } | null {
+  const cookie = req.headers.get("cookie") || "";
+  const match = cookie.match(/ob_session=([^;]+)/);
+  if (!match) return null;
+  return sessions.get(match[1]) || null;
+}
+
 // ── Timing-safe string comparison (prevents timing attacks on secrets) ───
 function safeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) {
@@ -288,6 +318,154 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
+  // ── Twitter/X OAuth 2.0 PKCE routes ─────────────────────
+
+  // GET /auth/x — Start OAuth flow → redirect to Twitter
+  if (path === "/auth/x" && method === "GET") {
+    if (!X_CLIENT_ID) {
+      return new Response("X OAuth not configured", { status: 503, headers: { "Content-Type": "text/plain", ...SECURITY_HEADERS } });
+    }
+    const state = randomBytes(16).toString("hex");
+    const { codeVerifier, codeChallenge } = generatePKCE();
+    oauthStates.set(state, { codeVerifier, createdAt: Date.now() });
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: X_CLIENT_ID,
+      redirect_uri: X_REDIRECT_URI,
+      scope: "tweet.read users.read offline.access",
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    });
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `https://twitter.com/i/oauth2/authorize?${params}`, ...SECURITY_HEADERS },
+    });
+  }
+
+  // GET /auth/x/callback — Exchange code for token, create session
+  if (path === "/auth/x/callback" && method === "GET") {
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+
+    if (error) {
+      return new Response(`<html><body style="background:#0a0a0a;color:#ef4444;font-family:monospace;padding:40px"><h2>Login cancelled</h2><p>${error}</p><a href="/" style="color:#4ade80">← Back to OpenBets</a></body></html>`, {
+        status: 400, headers: { "Content-Type": "text/html", ...SECURITY_HEADERS },
+      });
+    }
+
+    if (!code || !state || !oauthStates.has(state)) {
+      return new Response(`<html><body style="background:#0a0a0a;color:#ef4444;font-family:monospace;padding:40px"><h2>Invalid OAuth state</h2><a href="/" style="color:#4ade80">← Back to OpenBets</a></body></html>`, {
+        status: 400, headers: { "Content-Type": "text/html", ...SECURITY_HEADERS },
+      });
+    }
+
+    const { codeVerifier } = oauthStates.get(state)!;
+    oauthStates.delete(state);
+
+    try {
+      // Exchange code for access token
+      const tokenBody = new URLSearchParams({
+        code,
+        grant_type: "authorization_code",
+        client_id: X_CLIENT_ID,
+        redirect_uri: X_REDIRECT_URI,
+        code_verifier: codeVerifier,
+      });
+
+      const tokenHeaders: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+      // If client_secret is set, use Basic auth (confidential client)
+      if (X_CLIENT_SECRET) {
+        tokenHeaders["Authorization"] = `Basic ${Buffer.from(`${X_CLIENT_ID}:${X_CLIENT_SECRET}`).toString("base64")}`;
+      }
+
+      const tokenRes = await fetch("https://api.twitter.com/2/oauth2/token", {
+        method: "POST",
+        headers: tokenHeaders,
+        body: tokenBody,
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!tokenRes.ok) {
+        const errText = await tokenRes.text();
+        console.error(`[X OAuth] Token exchange failed: ${tokenRes.status} ${errText}`);
+        return new Response(`<html><body style="background:#0a0a0a;color:#ef4444;font-family:monospace;padding:40px"><h2>Login failed</h2><p>Token exchange error</p><a href="/" style="color:#4ade80">← Back to OpenBets</a></body></html>`, {
+          status: 500, headers: { "Content-Type": "text/html", ...SECURITY_HEADERS },
+        });
+      }
+
+      const tokenData = await tokenRes.json();
+      const accessToken = tokenData.access_token;
+
+      // Fetch user info
+      const userRes = await fetch("https://api.twitter.com/2/users/me?user.fields=profile_image_url,name,username", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!userRes.ok) {
+        console.error(`[X OAuth] User fetch failed: ${userRes.status}`);
+        return new Response(`<html><body style="background:#0a0a0a;color:#ef4444;font-family:monospace;padding:40px"><h2>Failed to get user info</h2><a href="/" style="color:#4ade80">← Back to OpenBets</a></body></html>`, {
+          status: 500, headers: { "Content-Type": "text/html", ...SECURITY_HEADERS },
+        });
+      }
+
+      const userData = await userRes.json();
+      const user = userData.data;
+
+      // Create session
+      const sessionId = randomBytes(24).toString("hex");
+      sessions.set(sessionId, {
+        xId: user.id,
+        xHandle: user.username,
+        xName: user.name,
+        avatar: user.profile_image_url || "",
+        createdAt: Date.now(),
+      });
+
+      console.log(`[X OAuth] User logged in: @${user.username} (${user.id})`);
+
+      // Set cookie and redirect to dashboard
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: "/",
+          "Set-Cookie": `ob_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${86400 * 7}${X_REDIRECT_URI.startsWith("https") ? "; Secure" : ""}`,
+          ...SECURITY_HEADERS,
+        },
+      });
+    } catch (e: any) {
+      console.error(`[X OAuth] Error:`, e.message);
+      return new Response(`<html><body style="background:#0a0a0a;color:#ef4444;font-family:monospace;padding:40px"><h2>Login error</h2><p>${e.message}</p><a href="/" style="color:#4ade80">← Back to OpenBets</a></body></html>`, {
+        status: 500, headers: { "Content-Type": "text/html", ...SECURITY_HEADERS },
+      });
+    }
+  }
+
+  // GET /auth/me — Check current session
+  if (path === "/auth/me" && method === "GET") {
+    const session = getSessionFromCookie(req);
+    if (!session) return json({ logged_in: false });
+    return json({ logged_in: true, x_handle: session.xHandle, x_name: session.xName, avatar: session.avatar });
+  }
+
+  // GET /auth/logout — Clear session
+  if (path === "/auth/logout" && method === "GET") {
+    const cookie = req.headers.get("cookie") || "";
+    const match = cookie.match(/ob_session=([^;]+)/);
+    if (match) sessions.delete(match[1]);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/",
+        "Set-Cookie": "ob_session=; Path=/; HttpOnly; Max-Age=0",
+        ...SECURITY_HEADERS,
+      },
+    });
+  }
+
   // ── Public endpoints (no auth) ──────────────────────────
 
   // GET / — HTML dashboard for browsers, JSON for API clients
@@ -401,6 +579,7 @@ export async function handleRequest(req: Request): Promise<Response> {
 
       const lang = detectLang(req, url);
       const strings = getStrings(lang);
+      const session = getSessionFromCookie(req);
       const html = renderDashboard({
         leaderboard,
         bets: formattedBets,
@@ -412,6 +591,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         resolvedBets: resolvedBetsRaw,
         lang,
         strings,
+        user: session ? { xHandle: session.xHandle, xName: session.xName, avatar: session.avatar } : undefined,
       });
 
       return new Response(html, {

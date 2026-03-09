@@ -18,8 +18,9 @@ export function renderDashboard(data: {
   resolvedBets?: any[];
   lang?: Lang;
   strings?: Strings;
+  user?: { xHandle: string; xName: string; avatar: string };
 }): string {
-  const { leaderboard, bets, totalBots, totalPai, activity = [], clashes = 0, chatsByBet = {}, resolvedBets = [], lang = "en", strings: t } = data;
+  const { leaderboard, bets, totalBots, totalPai, activity = [], clashes = 0, chatsByBet = {}, resolvedBets = [], lang = "en", strings: t, user } = data;
 
   // Fallback strings (English) if not provided
   const s: Strings = t || {
@@ -389,6 +390,20 @@ export function renderDashboard(data: {
           <span class="text-green-500/20">|</span>
           <a href="?lang=pt" class="${lang === 'pt' ? 'text-green-300 font-semibold' : 'text-gray-600 hover:text-green-400'} transition-colors">PT</a>
         </div>
+        <!-- Login with X / User profile -->
+        ${user ? `
+        <div class="flex items-center gap-2">
+          ${user.avatar ? `<img src="${esc(user.avatar)}" alt="" class="w-5 h-5 rounded-full" />` : ""}
+          <span class="text-[11px] text-white/80 mono">@${esc(user.xHandle)}</span>
+          <a href="/auth/logout" class="text-[9px] text-red-400/60 hover:text-red-400 mono transition-colors no-underline">[logout]</a>
+        </div>
+        ` : `
+        <a href="/auth/x" id="x-login-btn"
+          class="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-white/30 rounded px-2.5 py-1 text-[11px] text-white/80 hover:text-white mono transition-all cursor-pointer no-underline">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          <span>Login</span>
+        </a>
+        `}
         <a href="/bot-prompt" class="text-gray-600 hover:text-green-400 transition-colors text-[10px] hidden md:inline mono">\u{1F916} bot-prompt</a>
         <a href="https://github.com/skorekclaude/openbets" target="_blank" class="text-gray-600 hover:text-green-400 transition-colors text-[10px] mono">api \u2192</a>
       </div>
